@@ -7,6 +7,12 @@ from src.spotify_client import SpotifyClient
 from src.lyrics_manager import LyricsManager
 from src.floating_window import FloatingLyricsWindow
 from src.settings_manager import read_secrets, validate_secrets
+from src.translation_clients import GoogleTranslateClient, OpenRouterClient
+from src.translation_settings import (
+    read_translation_settings,
+    save_translation_settings,
+    read_models_config,
+)
 from src.settings_window import SettingsWindow
 
 # Initialize Spotify client via settings
@@ -45,6 +51,46 @@ def init_spotify_client(settings):
             pass
 
 
+def init_translation_client():
+    settings = read_translation_settings()
+    models_body = read_models_config()
+    secrets = read_secrets()
+
+    provider = settings.get("provider", "Google Translate")
+    target_language = settings.get("target_language", "en")
+    lyrics_manager.target_language = target_language
+
+    if provider == "OpenRouter":
+        api_key = secrets.get("openrouter_api_key", "")
+        model = settings.get("selected_model", "openrouter/auto")
+        prompt = settings.get("global_prompt", "")
+        body = models_body.get(model, {})
+        try:
+            lyrics_manager.translation_client = OpenRouterClient(
+                api_key=api_key,
+                model=model,
+                prompt_template=prompt,
+                model_body=body,
+            )
+            try:
+                status_label.config(text="Translation: OpenRouter ready")
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"Error initializing OpenRouter client: {e}")
+            lyrics_manager.translation_client = GoogleTranslateClient()
+            try:
+                status_label.config(text="Translation fallback: Google Translate")
+            except Exception:
+                pass
+    else:
+        lyrics_manager.translation_client = GoogleTranslateClient()
+        try:
+            status_label.config(text="Translation: Google Translate")
+        except Exception:
+            pass
+
+
 def open_settings_modal(prefill=None):
     """Open settings window, save to secrets.txt, and reinit client on save."""
     theme = {
@@ -64,6 +110,7 @@ def open_settings_modal(prefill=None):
 
     def on_saved(values):
         init_spotify_client(values)
+        init_translation_client()
         # Force refresh lyrics after auth
         global current_song_id
         current_song_id = None
@@ -261,6 +308,9 @@ def update_lyrics():
                     target=lyrics_manager.translate_lyrics,
                     args=(lyrics_data, song_id, translate_callback)
                 ).start()
+        elif lyrics is None:
+            # Could be an auth error or API error; handled elsewhere
+            status_label.config(text="Error loading lyrics")
         else:
             print("[DEBUG] update_lyrics: No lyrics data available for this song")
             status_label.config(text="No lyrics available")
@@ -531,6 +581,20 @@ toggle_button.bind("<Leave>", on_button_leave)
 def refresh_lyrics():
     """Manually refresh the current song's lyrics."""
     global current_song_id
+    # Clear cache for the currently playing song (if any)
+    current_playback, _ = get_current_playback_position()
+    song_id = None
+    try:
+        if current_playback and current_playback.get('item'):
+            song_id = current_playback['item']['id']
+    except Exception:
+        song_id = None
+    if song_id:
+        lyrics_manager.clear_cache(song_id)
+        try:
+            status_label.config(text="Cache cleared. Refreshing lyrics...")
+        except Exception:
+            pass
     current_song_id = None  # Force refresh
     update_lyrics()
 
@@ -662,6 +726,7 @@ scrollbar.pack(fill='y')
 
 # Initialize settings and client
 ensure_settings_and_init()
+init_translation_client()
 
 # Start the update loop
 root.after(500, update_display)

@@ -2,13 +2,15 @@
 import pickle
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from deep_translator import GoogleTranslator
+from typing import Optional, List
+
+from .translation_clients import BaseTranslationClient, GoogleTranslateClient
 
 
 class LyricsManager:
     """Manages lyrics translation and caching."""
     
-    def __init__(self, cache_file='lyrics_cache.pkl', max_cache_size=1000):
+    def __init__(self, cache_file='lyrics_cache.pkl', max_cache_size=1000, translation_client: Optional[BaseTranslationClient] = None, target_language: str = 'en'):
         """Initialize the lyrics manager.
         
         Args:
@@ -18,6 +20,8 @@ class LyricsManager:
         self.cache_file = cache_file
         self.max_cache_size = max_cache_size
         self.cache = self._load_cache()
+        self.translation_client: BaseTranslationClient = translation_client or GoogleTranslateClient()
+        self.target_language = target_language
     
     def _load_cache(self):
         """Load cache from file if it exists.
@@ -41,6 +45,22 @@ class LyricsManager:
                 pickle.dump(self.cache, f)
         except Exception as e:
             print(f"Error saving cache: {e}")
+    
+    def clear_cache(self, song_id: Optional[str] = None):
+        """Clear cached translations.
+        
+        Args:
+            song_id: If provided, only clear this track's cache; otherwise clear all.
+        """
+        try:
+            if song_id:
+                if song_id in self.cache:
+                    del self.cache[song_id]
+            else:
+                self.cache.clear()
+            self.save_cache()
+        except Exception as e:
+            print(f"Error clearing cache: {e}")
     
     def get_cached_lyrics(self, song_id):
         """Get cached translated lyrics for a song.
@@ -70,29 +90,31 @@ class LyricsManager:
         Returns:
             list: Translated lyrics with original and translated text
         """
-        translator = GoogleTranslator(source='auto', target='en')
+        # Prepare ordered list of lines
+        ordered = sorted(lyrics_data, key=lambda x: int(x['startTimeMs']))
+        original_lines: List[str] = [line['words'] for line in ordered]
+
+        try:
+            translated_lines = self.translation_client.translate_lines(
+                original_lines,
+                source_lang=None,
+                target_lang=self.target_language,
+            )
+        except Exception as e:
+            print(f"Error translating lyrics via client: {e}")
+            # Fallback: keep originals on error
+            translated_lines = original_lines
+
+        # Merge into lyric dicts
+        translated_lyrics = []
+        for src, translated_text in zip(ordered, translated_lines):
+            translated_lyrics.append({
+                'startTimeMs': src['startTimeMs'],
+                'words': src['words'],
+                'translated': translated_text,
+            })
         
-        def translate_line(line):
-            """Translate a single lyric line."""
-            original_text = line['words']
-            try:
-                translated_text = translator.translate(original_text)
-            except Exception as e:
-                print(f"Error translating '{original_text}': {e}")
-                translated_text = original_text
-            return {
-                'startTimeMs': line['startTimeMs'],
-                'words': original_text,
-                'translated': translated_text
-            }
-        
-        # Translate lines in parallel
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            futures = [executor.submit(translate_line, line) for line in lyrics_data]
-            translated_lyrics = [future.result() for future in as_completed(futures)]
-        
-        # Sort by start time to maintain order
-        translated_lyrics.sort(key=lambda x: int(x['startTimeMs']))
+        # Already ordered
         
         # Store in cache
         self.cache[song_id] = translated_lyrics

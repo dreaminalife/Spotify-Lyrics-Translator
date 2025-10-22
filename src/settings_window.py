@@ -3,6 +3,15 @@ from tkinter import ttk, messagebox
 from typing import Callable, Dict, Optional
 
 from .settings_manager import read_secrets, save_secrets, validate_secrets
+from .translation_settings import (
+    read_translation_settings,
+    save_translation_settings,
+    read_models_config,
+    save_models_config,
+    DEFAULT_PROMPT,
+    DEFAULT_MODEL_PARAMS,
+)
+from .translation_clients import fetch_openrouter_models, format_model_display
 
 
 class SettingsWindow(tk.Toplevel):
@@ -36,11 +45,16 @@ class SettingsWindow(tk.Toplevel):
         self.on_saved = on_saved
 
         current = read_secrets()
+        tsettings = read_translation_settings()
+        models_config = read_models_config()
 
-        container = tk.Frame(self, bg=self.theme["panel"], padx=20, pady=20)
-        container.pack(fill=tk.BOTH, expand=True)
+        notebook = ttk.Notebook(self)
+        notebook.pack(fill=tk.BOTH, expand=True)
 
-        # Fields
+        # Spotify Tab
+        tab_spotify = tk.Frame(notebook, bg=self.theme["panel"], padx=20, pady=20)
+        notebook.add(tab_spotify, text="Spotify")
+
         self.vars: Dict[str, tk.StringVar] = {
             "client_id": tk.StringVar(value=current.get("client_id", "")),
             "client_secret": tk.StringVar(value=current.get("client_secret", "")),
@@ -55,24 +69,292 @@ class SettingsWindow(tk.Toplevel):
             ("redirect_uri", "Redirect URI"),
             ("sp_dc_cookie", "sp_dc Cookie"),
         ]:
-            lbl = tk.Label(container, text=label, bg=self.theme["panel"], fg=self.theme["label_fg"]) 
+            lbl = tk.Label(tab_spotify, text=label, bg=self.theme["panel"], fg=self.theme["label_fg"]) 
             lbl.grid(row=row, column=0, sticky="w", pady=(0, 6))
 
             show = "*" if key == "client_secret" else None
-            entry = tk.Entry(container, textvariable=self.vars[key], show=show, bg=self.theme["entry_bg"], fg=self.theme["entry_fg"], insertbackground=self.theme["entry_fg"], relief=tk.FLAT)
+            entry = tk.Entry(tab_spotify, textvariable=self.vars[key], show=show, bg=self.theme["entry_bg"], fg=self.theme["entry_fg"], insertbackground=self.theme["entry_fg"], relief=tk.FLAT)
             entry.grid(row=row, column=1, sticky="ew", pady=(0, 6))
             row += 1
 
-        container.grid_columnconfigure(1, weight=1)
+        tab_spotify.grid_columnconfigure(1, weight=1)
 
-        # Buttons
-        buttons = tk.Frame(container, bg=self.theme["panel"]) 
-        buttons.grid(row=row, column=0, columnspan=2, sticky="e", pady=(12, 0))
+        # Translation Tab
+        tab_translation = tk.Frame(notebook, bg=self.theme["panel"], padx=20, pady=20)
+        notebook.add(tab_translation, text="Translation")
 
-        cancel_btn = tk.Button(buttons, text="Cancel", command=self._on_cancel, bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief=tk.FLAT, padx=16, pady=8, cursor="hand2")
+        # Provider selection
+        provider_var = tk.StringVar(value=tsettings.get("provider", "Google Translate"))
+        tk.Label(tab_translation, text="Provider", bg=self.theme["panel"], fg=self.theme["label_fg"]).grid(row=0, column=0, sticky="w")
+        provider_combo = ttk.Combobox(tab_translation, textvariable=provider_var, values=["Google Translate", "OpenRouter"], state="readonly")
+        provider_combo.grid(row=0, column=1, sticky="ew", pady=(0, 6))
+
+        # Target language
+        target_lang_var = tk.StringVar(value=tsettings.get("target_language", "en"))
+        tk.Label(tab_translation, text="Target Language (e.g., en)", bg=self.theme["panel"], fg=self.theme["label_fg"]).grid(row=1, column=0, sticky="w")
+        target_lang_entry = tk.Entry(tab_translation, textvariable=target_lang_var, bg=self.theme["entry_bg"], fg=self.theme["entry_fg"], insertbackground=self.theme["entry_fg"], relief=tk.FLAT)
+        target_lang_entry.grid(row=1, column=1, sticky="ew", pady=(0, 6))
+
+        # OpenRouter API key
+        openrouter_key_var = tk.StringVar(value=current.get("openrouter_api_key", ""))
+        tk.Label(tab_translation, text="OpenRouter API Key", bg=self.theme["panel"], fg=self.theme["label_fg"]).grid(row=2, column=0, sticky="w")
+        openrouter_key_entry = tk.Entry(tab_translation, textvariable=openrouter_key_var, show="*", bg=self.theme["entry_bg"], fg=self.theme["entry_fg"], insertbackground=self.theme["entry_fg"], relief=tk.FLAT)
+        openrouter_key_entry.grid(row=2, column=1, sticky="ew", pady=(0, 6))
+
+        # Model dropdown (dynamic via OpenRouter API)
+        model_display_var = tk.StringVar(value=tsettings.get("selected_model", "openrouter/auto"))
+        tk.Label(tab_translation, text="OpenRouter Model", bg=self.theme["panel"], fg=self.theme["label_fg"]).grid(row=3, column=0, sticky="w")
+        model_combo = ttk.Combobox(tab_translation, textvariable=model_display_var, values=[model_display_var.get()], state="normal")
+        model_combo.grid(row=3, column=1, sticky="ew", pady=(0, 6))
+        # Refresh models button
+        refresh_models_btn = tk.Button(
+            tab_translation,
+            text="Refresh Models",
+            bg=self.theme["button_bg"],
+            fg=self.theme["button_fg"],
+            relief=tk.FLAT,
+            padx=10,
+            pady=6,
+            cursor="hand2",
+        )
+        refresh_models_btn.grid(row=3, column=2, sticky="w")
+
+        # JSON body editor for selected model
+        tk.Label(tab_translation, text="Model JSON Body", bg=self.theme["panel"], fg=self.theme["label_fg"]).grid(row=4, column=0, sticky="nw")
+        body_text = tk.Text(tab_translation, height=10, bg=self.theme["entry_bg"], fg=self.theme["entry_fg"], insertbackground=self.theme["entry_fg"], relief=tk.FLAT)
+        body_text.grid(row=4, column=1, sticky="nsew", pady=(0, 6))
+        # Reset to defaults button
+        reset_defaults_btn = tk.Button(
+            tab_translation,
+            text="Reset to Defaults",
+            bg=self.theme["button_bg"],
+            fg=self.theme["button_fg"],
+            relief=tk.FLAT,
+            padx=10,
+            pady=6,
+            cursor="hand2",
+        )
+        reset_defaults_btn.grid(row=4, column=2, sticky="nw")
+
+        # Mapping from display label -> model id
+        self._model_display_to_id: Dict[str, str] = {}
+        self._models_cache = []  # raw fetched model list
+        self._all_model_displays = []  # full display list for typeahead
+        self._filtered_model_displays = []
+
+        def _current_model_id_from_display() -> str:
+            display = model_display_var.get()
+            return self._model_display_to_id.get(display, display)
+
+        def load_model_body(*_):
+            import json
+            model_id = _current_model_id_from_display()
+            body = models_config.get(model_id, DEFAULT_MODEL_PARAMS)
+            try:
+                body_text.delete("1.0", tk.END)
+                body_text.insert("1.0", json.dumps(body, ensure_ascii=False, indent=2))
+            except Exception:
+                body_text.delete("1.0", tk.END)
+                body_text.insert("1.0", "{}")
+
+        model_combo.bind("<<ComboboxSelected>>", load_model_body)
+        load_model_body()
+
+        def _populate_models_async(show_messages: bool = True) -> None:
+            import threading
+
+            def worker():
+                api_key = openrouter_key_var.get().strip()
+                items = fetch_openrouter_models(api_key)
+
+                def on_ui():
+                    # If failed or missing key
+                    if not items:
+                        if show_messages:
+                            try:
+                                messagebox.showinfo("OpenRouter", "Could not fetch models. Check your API key or try again later.")
+                            except Exception:
+                                pass
+                        # Fallback to a minimal default option
+                        fallback_vals = ["openrouter/auto"]
+                        model_combo.configure(values=fallback_vals)
+                        model_display_var.set("openrouter/auto")
+                        load_model_body()
+                        return
+
+                    self._models_cache = items
+                    # Build display list and mapping
+                    display_values = []
+                    mapping: Dict[str, str] = {}
+                    for m in items:
+                        label = format_model_display(m)
+                        display_values.append(label)
+                        mapping[label] = m.get("id", "")
+                    self._model_display_to_id = mapping
+                    self._all_model_displays = display_values[:]
+
+                    # Try to preserve previous selection by id
+                    prev_id = tsettings.get("selected_model", "openrouter/auto")
+                    # Find display for prev_id
+                    selected_display = None
+                    for disp, mid in mapping.items():
+                        if mid == prev_id:
+                            selected_display = disp
+                            break
+
+                    model_combo.configure(values=display_values)
+                    if selected_display:
+                        model_display_var.set(selected_display)
+                    else:
+                        # Default to first item or previous raw value
+                        if display_values:
+                            model_display_var.set(display_values[0])
+
+                    # After updating selection, load body
+                    load_model_body()
+
+                try:
+                    self.after(0, on_ui)
+                except Exception:
+                    pass
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        def on_refresh_models():
+            _populate_models_async(show_messages=True)
+
+        refresh_models_btn.configure(command=on_refresh_models)
+
+        def on_reset_defaults():
+            import json
+            try:
+                body_text.delete("1.0", tk.END)
+                body_text.insert("1.0", json.dumps(DEFAULT_MODEL_PARAMS, ensure_ascii=False, indent=2))
+            except Exception:
+                body_text.delete("1.0", tk.END)
+                body_text.insert("1.0", "{}")
+
+        reset_defaults_btn.configure(command=on_reset_defaults)
+
+        def on_model_keyrelease(event):
+            # Filter the dropdown values based on current typed text
+            # Ignore navigation keys
+            if event.keysym in ("Up", "Down", "Return", "Escape", "Tab"):
+                return
+            typed = model_combo.get()
+            if not typed:
+                self._filtered_model_displays = self._all_model_displays[:]
+                model_combo.configure(values=self._all_model_displays or model_combo.cget("values"))
+                return
+            low = typed.lower()
+            filtered = [d for d in (self._all_model_displays or []) if low in d.lower()]
+            self._filtered_model_displays = filtered[:]
+            model_combo.configure(values=filtered or self._all_model_displays or model_combo.cget("values"))
+            # Show dropdown to visualize filtered options
+            try:
+                if filtered:
+                    model_combo.event_generate('<Down>')
+            except Exception:
+                pass
+
+        model_combo.bind("<KeyRelease>", on_model_keyrelease)
+
+        def _commit_best_match():
+            # If current text isn't exactly one of the display labels, commit the first filtered match
+            current = model_display_var.get()
+            if current in self._model_display_to_id:
+                return True
+            candidate_list = self._filtered_model_displays or self._all_model_displays
+            if candidate_list:
+                model_display_var.set(candidate_list[0])
+                try:
+                    load_model_body()
+                except Exception:
+                    pass
+                return True
+            return False
+
+        def on_model_return(event):
+            _commit_best_match()
+            return "break"
+
+        model_combo.bind("<Return>", on_model_return)
+
+        def on_provider_changed(*_):
+            if provider_var.get() == "OpenRouter":
+                _populate_models_async(show_messages=False)
+
+        provider_combo.bind("<<ComboboxSelected>>", on_provider_changed)
+        # Initial fetch if provider is OpenRouter and API key is present
+        if provider_var.get() == "OpenRouter" and (openrouter_key_var.get().strip()):
+            _populate_models_async(show_messages=False)
+
+        # Global prompt editor
+        tk.Label(tab_translation, text="Global Prompt", bg=self.theme["panel"], fg=self.theme["label_fg"]).grid(row=5, column=0, sticky="nw")
+        prompt_text = tk.Text(tab_translation, height=8, bg=self.theme["entry_bg"], fg=self.theme["entry_fg"], insertbackground=self.theme["entry_fg"], relief=tk.FLAT)
+        prompt_text.grid(row=5, column=1, sticky="nsew")
+        prompt_text.insert("1.0", tsettings.get("global_prompt", DEFAULT_PROMPT))
+
+        # Save buttons row for translation tab
+        def on_save_translation():
+            # Save secrets with API key
+            secrets_to_save = {
+                "client_id": self.vars["client_id"].get(),
+                "client_secret": self.vars["client_secret"].get(),
+                "redirect_uri": self.vars["redirect_uri"].get(),
+                "sp_dc_cookie": self.vars["sp_dc_cookie"].get(),
+                "openrouter_api_key": openrouter_key_var.get().strip(),
+            }
+            try:
+                save_secrets(secrets_to_save)
+            except Exception:
+                pass
+
+            # Save translation settings
+            selected_display = model_display_var.get()
+            selected_model_id = self._model_display_to_id.get(selected_display, selected_display)
+            save_translation_settings({
+                "provider": provider_var.get(),
+                "selected_model": selected_model_id,
+                "target_language": target_lang_var.get().strip() or "en",
+                "global_prompt": prompt_text.get("1.0", tk.END).strip() or DEFAULT_PROMPT,
+            })
+
+            # Save model body
+            import json
+            try:
+                raw = body_text.get("1.0", tk.END)
+                parsed = json.loads(raw) if raw else {}
+                if not isinstance(parsed, dict) or len(parsed) == 0:
+                    parsed = DEFAULT_MODEL_PARAMS
+                models_config[selected_model_id] = parsed
+                save_models_config(models_config)
+            except Exception:
+                # ignore invalid JSON silently here; the app will keep last valid
+                # but if invalid, try to persist defaults to ensure runnable
+                try:
+                    models_config[selected_model_id] = DEFAULT_MODEL_PARAMS
+                    save_models_config(models_config)
+                except Exception:
+                    pass
+
+            if self.on_saved:
+                self.on_saved(secrets_to_save)
+
+        tab_translation.grid_columnconfigure(1, weight=1)
+        tab_translation.grid_columnconfigure(2, weight=0)
+        tab_translation.grid_rowconfigure(4, weight=1)
+        tab_translation.grid_rowconfigure(5, weight=1)
+
+        # Footer buttons shared (Cancel/Save All)
+        footer = tk.Frame(self, bg=self.theme["panel"]) 
+        footer.pack(fill=tk.X, pady=(12, 12))
+
+        cancel_btn = tk.Button(footer, text="Cancel", command=self._on_cancel, bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief=tk.FLAT, padx=16, pady=8, cursor="hand2")
         cancel_btn.pack(side=tk.RIGHT, padx=(0, 8))
 
-        save_btn = tk.Button(buttons, text="Save", command=self._on_save, bg=self.theme["accent"], fg=self.theme["button_fg"], activebackground=self.theme["accent_active"], relief=tk.FLAT, padx=16, pady=8, cursor="hand2")
+        # Save applies both tabs
+        save_btn = tk.Button(footer, text="Save", command=on_save_translation, bg=self.theme["accent"], fg=self.theme["button_fg"], activebackground=self.theme["accent_active"], relief=tk.FLAT, padx=16, pady=8, cursor="hand2")
         save_btn.pack(side=tk.RIGHT)
 
         self.bind("<Return>", lambda e: self._on_save())
@@ -82,18 +364,7 @@ class SettingsWindow(tk.Toplevel):
         return {k: v.get().strip() for k, v in self.vars.items()}
 
     def _on_save(self) -> None:
-        values = self._collect_values()
-        ok, missing = validate_secrets(values)
-        if not ok:
-            messagebox.showerror("Missing fields", f"Please fill: {', '.join(missing)}")
-            return
-        try:
-            save_secrets(values)
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to save settings: {e}")
-            return
-        if self.on_saved:
-            self.on_saved(values)
+        # obsolete: we route through on_save_translation in the footer
         self.grab_release()
         self.destroy()
 

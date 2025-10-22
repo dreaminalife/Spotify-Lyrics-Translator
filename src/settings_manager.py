@@ -2,6 +2,8 @@ from pathlib import Path
 from typing import Dict, Tuple
 
 REQUIRED_KEYS = ["client_id", "client_secret", "redirect_uri", "sp_dc_cookie"]
+# Optional keys we also persist if present (not required for validation)
+OPTIONAL_KEYS = ["openrouter_api_key"]
 
 
 def get_secrets_file_path() -> Path:
@@ -43,7 +45,12 @@ def save_secrets(values: Dict[str, str]) -> None:
     """
     secrets_path = get_secrets_file_path()
     lines = []
+    # Write required keys first
     for key in REQUIRED_KEYS:
+        val = values.get(key, "")
+        lines.append(f"{key}={val}")
+    # Then optional keys
+    for key in OPTIONAL_KEYS:
         val = values.get(key, "")
         lines.append(f"{key}={val}")
     temp_path = secrets_path.with_suffix(".tmp")
