@@ -173,7 +173,7 @@ class FloatingLyricsWindow:
         else:
             print(f"[DEBUG] floating_window.update_lyrics: No duration available for progress bar")
     
-    def _transition_text(self, label, new_text, steps=5):
+    def _transition_text(self, label, new_text, steps=3):
         """Smoothly transition text in a label.
         
         Args:
@@ -190,19 +190,19 @@ class FloatingLyricsWindow:
             if step < steps:
                 alpha = 1.0 - (step / steps)
                 label.config(fg=self._adjust_color_alpha(label.cget("fg"), alpha))
-                label.after(20, lambda: fade_out(step + 1))
+                label.after(0, lambda: fade_out(step + 1))
             else:
                 # Change text
                 label.config(text=new_text)
                 # Fade in
                 fade_in(0)
-        
+
         # Fade in
         def fade_in(step=0):
             if step < steps:
                 alpha = step / steps
                 label.config(fg=self._adjust_color_alpha(label.cget("fg"), alpha))
-                label.after(20, lambda: fade_in(step + 1))
+                label.after(0, lambda: fade_in(step + 1))
             else:
                 # Reset to full color
                 if label == self.original_label:

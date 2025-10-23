@@ -214,7 +214,15 @@ def update_display():
 
         # Update floating window if it exists
         if floating_window and floating_window.is_open():
-            current_line = lyrics_manager.get_current_line(current_lyrics, current_position)
+            # Use the same source as the main window (Treeview) for current line
+            if last_index:
+                item_values = tree.item(last_index)['values']
+                current_line = {
+                    'words': item_values[1],
+                    'translated': item_values[2]
+                }
+            else:
+                current_line = None
             song_duration = current_song['item']['duration_ms'] if current_song and 'item' in current_song else 0
             floating_window.update_lyrics(current_song_name, current_line, current_position, song_duration)
         
