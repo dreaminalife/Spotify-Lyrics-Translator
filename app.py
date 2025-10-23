@@ -595,7 +595,6 @@ def refresh_lyrics():
             status_label.config(text="Cache cleared. Refreshing lyrics...")
         except Exception:
             pass
-    current_song_id = None  # Force refresh
     update_lyrics()
 
 refresh_button = tk.Button(
