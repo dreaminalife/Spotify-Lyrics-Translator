@@ -142,6 +142,109 @@ class SettingsWindow(tk.Toplevel):
         self._all_model_displays = []  # full display list for typeahead
         self._filtered_model_displays = []
 
+        # Persistent dropdown popup for typeahead suggestions
+        self._model_popup: Optional[tk.Toplevel] = None
+        self._model_listbox: Optional[tk.Listbox] = None
+
+        def _hide_model_popup():
+            try:
+                if self._model_popup is not None:
+                    self._model_popup.withdraw()
+            except Exception:
+                pass
+
+        def _ensure_model_popup() -> bool:
+            if self._model_popup is not None and self._model_popup.winfo_exists():
+                return True
+            try:
+                popup = tk.Toplevel(self)
+                popup.overrideredirect(True)
+                popup.configure(bg=self.theme["panel"]) 
+                try:
+                    popup.attributes("-topmost", True)
+                except Exception:
+                    pass
+
+                listbox = tk.Listbox(
+                    popup,
+                    bg=self.theme["entry_bg"],
+                    fg=self.theme["entry_fg"],
+                    selectbackground=self.theme["accent"],
+                    activestyle="none",
+                    highlightthickness=0,
+                    relief=tk.FLAT,
+                )
+                listbox.pack(fill=tk.BOTH, expand=True)
+
+                def on_click_select(_):
+                    try:
+                        sel = listbox.curselection()
+                        if sel:
+                            value = listbox.get(sel[0])
+                            model_display_var.set(value)
+                            load_model_body()
+                    except Exception:
+                        pass
+                    _hide_model_popup()
+                    try:
+                        model_combo.focus_set()
+                    except Exception:
+                        pass
+
+                listbox.bind("<ButtonRelease-1>", on_click_select)
+
+                self._model_popup = popup
+                self._model_listbox = listbox
+                return True
+            except Exception:
+                return False
+
+        def _place_model_popup():
+            if self._model_popup is None:
+                return
+            try:
+                x = model_combo.winfo_rootx()
+                y = model_combo.winfo_rooty() + model_combo.winfo_height()
+                width = model_combo.winfo_width()
+                # Fixed height; listbox scrolls implicitly
+                height = 200
+                self._model_popup.geometry(f"{width}x{height}+{x}+{y}")
+                self._model_popup.deiconify()
+            except Exception:
+                pass
+
+        def _update_model_popup(values: list):
+            if not values:
+                _hide_model_popup()
+                return
+            if not _ensure_model_popup():
+                return
+            try:
+                lb = self._model_listbox
+                if lb is None:
+                    return
+                lb.delete(0, tk.END)
+                for v in values:
+                    lb.insert(tk.END, v)
+                # Select best visible match
+                try:
+                    current_text = model_combo.get()
+                    idx = 0
+                    low = current_text.lower()
+                    for i, v in enumerate(values):
+                        if v.lower().startswith(low):
+                            idx = i
+                            break
+                    lb.selection_clear(0, tk.END)
+                    lb.selection_set(idx)
+                    lb.activate(idx)
+                    lb.see(idx)
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            _place_model_popup()
+
         def _current_model_id_from_display() -> str:
             display = model_display_var.get()
             return self._model_display_to_id.get(display, display)
@@ -245,19 +348,67 @@ class SettingsWindow(tk.Toplevel):
             if not typed:
                 self._filtered_model_displays = self._all_model_displays[:]
                 model_combo.configure(values=self._all_model_displays or model_combo.cget("values"))
+                _update_model_popup(self._filtered_model_displays)
                 return
             low = typed.lower()
             filtered = [d for d in (self._all_model_displays or []) if low in d.lower()]
             self._filtered_model_displays = filtered[:]
             model_combo.configure(values=filtered or self._all_model_displays or model_combo.cget("values"))
-            # Show dropdown to visualize filtered options
+            _update_model_popup(self._filtered_model_displays)
+
+        model_combo.bind("<KeyRelease>", on_model_keyrelease)
+
+        def _navigate_listbox(delta: int):
+            lb = self._model_listbox
+            if lb is None or not lb.winfo_ismapped():
+                _update_model_popup(self._filtered_model_displays or self._all_model_displays)
+                return
             try:
-                if filtered:
-                    model_combo.event_generate('<Down>')
+                sel = lb.curselection()
+                if sel:
+                    idx = sel[0]
+                else:
+                    idx = 0
+                idx = max(0, min(lb.size() - 1, idx + delta))
+                lb.selection_clear(0, tk.END)
+                lb.selection_set(idx)
+                lb.activate(idx)
+                lb.see(idx)
             except Exception:
                 pass
 
-        model_combo.bind("<KeyRelease>", on_model_keyrelease)
+        def _accept_selection():
+            lb = self._model_listbox
+            if lb is None or not lb.winfo_ismapped():
+                return
+            try:
+                sel = lb.curselection()
+                if sel:
+                    value = lb.get(sel[0])
+                    model_display_var.set(value)
+                    load_model_body()
+                _hide_model_popup()
+            except Exception:
+                pass
+
+        def _cancel_popup():
+            _hide_model_popup()
+
+        def on_model_keypress_nav(event):
+            if event.keysym == "Down":
+                _navigate_listbox(1)
+                return "break"
+            if event.keysym == "Up":
+                _navigate_listbox(-1)
+                return "break"
+            if event.keysym in ("Return",):
+                _accept_selection()
+                return "break"
+            if event.keysym in ("Escape",):
+                _cancel_popup()
+                return "break"
+
+        model_combo.bind("<KeyPress>", on_model_keypress_nav, add=True)
 
         def _commit_best_match():
             # If current text isn't exactly one of the display labels, commit the first filtered match
@@ -274,11 +425,7 @@ class SettingsWindow(tk.Toplevel):
                 return True
             return False
 
-        def on_model_return(event):
-            _commit_best_match()
-            return "break"
-
-        model_combo.bind("<Return>", on_model_return)
+        # Return is handled by the popup navigation handler; avoid duplicate binding
 
         def on_provider_changed(*_):
             if provider_var.get() == "OpenRouter":
