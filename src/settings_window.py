@@ -123,18 +123,6 @@ class SettingsWindow(tk.Toplevel):
         tk.Label(tab_translation, text="Model JSON Body", bg=self.theme["panel"], fg=self.theme["label_fg"]).grid(row=4, column=0, sticky="nw")
         body_text = tk.Text(tab_translation, height=10, bg=self.theme["entry_bg"], fg=self.theme["entry_fg"], insertbackground=self.theme["entry_fg"], relief=tk.FLAT)
         body_text.grid(row=4, column=1, sticky="nsew", pady=(0, 6))
-        # Reset to defaults button
-        reset_defaults_btn = tk.Button(
-            tab_translation,
-            text="Reset to Defaults",
-            bg=self.theme["button_bg"],
-            fg=self.theme["button_fg"],
-            relief=tk.FLAT,
-            padx=10,
-            pady=6,
-            cursor="hand2",
-        )
-        reset_defaults_btn.grid(row=4, column=2, sticky="nw")
 
         # Mapping from display label -> model id
         self._model_display_to_id: Dict[str, str] = {}
@@ -328,16 +316,6 @@ class SettingsWindow(tk.Toplevel):
 
         refresh_models_btn.configure(command=on_refresh_models)
 
-        def on_reset_defaults():
-            import json
-            try:
-                body_text.delete("1.0", tk.END)
-                body_text.insert("1.0", json.dumps(DEFAULT_MODEL_PARAMS, ensure_ascii=False, indent=2))
-            except Exception:
-                body_text.delete("1.0", tk.END)
-                body_text.insert("1.0", "{}")
-
-        reset_defaults_btn.configure(command=on_reset_defaults)
 
         def on_model_keyrelease(event):
             # Filter the dropdown values based on current typed text
