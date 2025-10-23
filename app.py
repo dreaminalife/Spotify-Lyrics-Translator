@@ -170,7 +170,6 @@ def update_display():
     global current_song_id, floating_window
     current_song, current_position = get_current_playback_position()
 
-    print(f"[DEBUG] update_display: current_position={current_position}, current_lyrics_length={len(current_lyrics) if current_lyrics else 0}, floating_window_exists={floating_window is not None}")
 
     # Clear previous current line highlighting
     for item in tree.get_children():
@@ -215,13 +214,10 @@ def update_display():
 
         # Update floating window if it exists
         if floating_window and floating_window.is_open():
-            print(f"[DEBUG] update_display: About to get current line for position {current_position}")
             current_line = lyrics_manager.get_current_line(current_lyrics, current_position)
             song_duration = current_song['item']['duration_ms'] if current_song and 'item' in current_song else 0
-            print(f"[DEBUG] update_display: current_line={current_line}")
             floating_window.update_lyrics(current_song_name, current_line, current_position, song_duration)
-        else:
-            print(f"[DEBUG] update_display: Floating window not available - exists={floating_window is not None}, is_open={floating_window.is_open() if floating_window else False}")
+        
     else:
         # No song playing or not authenticated yet
         current_time_label.config(text="0:00")
