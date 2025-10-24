@@ -41,48 +41,89 @@ class SpotifyClient:
             tuple: (playback_info, position_ms) or (None, 0) if nothing is playing
         """
         try:
+            # Prefer full playback state, but do not require is_playing
             current_playback = self.sp.current_playback()
-            if current_playback and current_playback['is_playing']:
-                return current_playback, current_playback['progress_ms']
-            else:
-                return None, 0
+            if current_playback and current_playback.get('item'):
+                return current_playback, int(current_playback.get('progress_ms') or 0)
+
+            # Fallback: some environments only return from currently_playing
+            currently_playing = self.sp.currently_playing()
+            if currently_playing and currently_playing.get('item'):
+                return currently_playing, int(currently_playing.get('progress_ms') or 0)
+
+            # Log device info to help diagnose "no active device" cases
+            try:
+                devices_resp = self.sp.devices()
+                devices = devices_resp.get('devices', []) if devices_resp else []
+                all_names = [d.get('name') for d in devices]
+                active_names = [d.get('name') for d in devices if d.get('is_active')]
+                print(f"No playback available. Devices detected: {all_names}, active: {active_names}")
+            except Exception as de:
+                print(f"Error fetching devices: {de}")
+
+            return None, 0
         except Exception as e:
             print(f"Error fetching current song playback position: {e}")
             return None, 0
-    
-    def get_lyrics(self, song_id, max_retries=3, initial_backoff=1.0):
-        """Get lyrics for a song with retry mechanism.
+
+    # Legacy method removed: retry logic is now centralized in LyricsService
+    def get_lyrics(self, song_id):
+        try:
+            return self.syrics_sp.get_lyrics(song_id)
+        except Exception as e:
+            print(f"Error fetching lyrics: {e}")
+            return None
+
+    def get_current_track_metadata(self):
+        """Return current track metadata (for lyrics providers) and track id.
         
-        Args:
-            song_id: Spotify track ID
-            max_retries: Maximum number of retry attempts (default: 3)
-            initial_backoff: Initial backoff time in seconds (default: 1.0)
-            
         Returns:
-            dict: Lyrics data from Syrics API or None if not available
+            tuple: (track_metadata_dict, spotify_track_id) or (None, None)
         """
-        retry_count = 0
-        backoff = initial_backoff
+        try:
+            # Try current_playback first
+            current_playback = self.sp.current_playback()
+            payload = current_playback if (current_playback and current_playback.get('item')) else None
+            # Fallback to currently_playing
+            if not payload:
+                cp = self.sp.currently_playing()
+                payload = cp if (cp and cp.get('item')) else None
+            if not payload:
+                return None, None
+            item = payload['item']
+            track_id = item.get('id')
+            track_name = item.get('name') or ''
+            artists = item.get('artists') or []
+            artist_name = artists[0]['name'] if artists else ''
+            album = item.get('album') or {}
+            album_name = album.get('name') or ''
+            duration_ms = int(item.get('duration_ms') or 0)
+            meta = {
+                'track_name': track_name,
+                'artist_name': artist_name,
+                'album_name': album_name,
+                'duration_ms': duration_ms,
+            }
+            return meta, track_id
+        except Exception as e:
+            print(f"Error building current track metadata: {e}")
+            return None, None
+
+    def get_device_status(self):
+        """Return available devices and the name of the active device (if any).
         
-        while retry_count <= max_retries:
-            try:
-                lyrics = self.syrics_sp.get_lyrics(song_id)
-                return lyrics
-            except Exception as e:
-                retry_count += 1
-                if retry_count > max_retries:
-                    print(f"Error fetching lyrics after {max_retries} retries: {e}")
-                    return None
-                
-                # Calculate exponential backoff with jitter
-                jitter = random.uniform(0.8, 1.2)
-                sleep_time = backoff * jitter
-                
-                print(f"Error fetching lyrics (attempt {retry_count}/{max_retries}): {e}")
-                print(f"Retrying in {sleep_time:.2f} seconds...")
-                
-                time.sleep(sleep_time)
-                backoff *= 2  # Exponential backoff
-        
-        return None
+        Returns:
+            dict: { 'devices': list, 'active_device': Optional[str] }
+        """
+        try:
+            resp = self.sp.devices()
+            devices = resp.get('devices', []) if resp else []
+            active = next((d for d in devices if d.get('is_active')), None)
+            return {
+                'devices': devices,
+                'active_device': active.get('name') if active else None,
+            }
+        except Exception as e:
+            print(f"Error fetching device status: {e}")
+            return { 'devices': [], 'active_device': None }
 

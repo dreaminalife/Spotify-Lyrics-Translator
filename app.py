@@ -1,11 +1,15 @@
 import tkinter as tk
 from tkinter import ttk
 import threading
+import logging
 import sv_ttk
 
 from src.spotify_client import SpotifyClient
 from src.lyrics_manager import LyricsManager
 from src.floating_window import FloatingLyricsWindow
+from src.lyrics_models import TrackMetadata
+from src.lyrics_providers import SyricsLyricsProvider, LRCLibLyricsProvider
+from src.lyrics_service import LyricsService
 from src.settings_manager import read_secrets, validate_secrets
 from src.translation_clients import GoogleTranslateClient, OpenRouterClient
 from src.translation_settings import (
@@ -15,11 +19,17 @@ from src.translation_settings import (
 )
 from src.settings_window import SettingsWindow
 
+# Configure logging to show INFO level and above
+logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+
 # Initialize Spotify client via settings
 spotify_client = None
 
 # Initialize lyrics manager
 lyrics_manager = LyricsManager()
+
+# Lyrics providers and service (initialized after Spotify client)
+lyrics_service = None
 
 # Global state
 current_song_id = None
@@ -27,6 +37,7 @@ current_lyrics = []
 current_song_name = ""
 language = ""
 floating_window = None
+lyrics_synced = True
 
 
 def init_spotify_client(settings):
@@ -43,6 +54,13 @@ def init_spotify_client(settings):
             status_label.config(text="Authenticated with Spotify")
         except Exception:
             pass
+        # Initialize lyrics service now that spotify client exists
+        global lyrics_service
+        providers = [
+            SyricsLyricsProvider(spotify_client.syrics_sp),
+            LRCLibLyricsProvider("Lyrics-Translator/0.1 (https://github.com/)")
+        ]
+        lyrics_service = LyricsService(providers)
     except Exception as e:
         print(f"Error initializing Spotify client: {e}")
         try:
@@ -167,7 +185,7 @@ def get_current_playback_position():
 
 # Function to update the Treeview and the current time label
 def update_display():
-    global current_song_id, floating_window
+    global current_song_id, floating_window, lyrics_synced
     current_song, current_position = get_current_playback_position()
 
 
@@ -192,57 +210,105 @@ def update_display():
         artist_name = current_song['item']['artists'][0]['name'] if current_song['item']['artists'] else "Unknown Artist"
         current_song_label.config(text=f"{song_name} • {artist_name}")
 
-        # Update main window treeview selection and highlight current line
+        # Update main window treeview selection and highlight current line (only when synced)
         last_index = None
-        for item in tree.get_children():
-            item_data = tree.item(item)
-            start_time = int(item_data['values'][0].split(":")[0]) * 60000 + int(item_data['values'][0].split(":")[1]) * 1000
-            if start_time <= current_position:
-                last_index = item
-            else:
-                break
-        
-        if last_index:
-            # Highlight the current line
-            tags = list(tree.item(last_index)['tags'])
-            if 'current' not in tags:
-                tags.append('current')
-                tree.item(last_index, tags=tags)
+        if lyrics_synced:
+            for item in tree.get_children():
+                item_data = tree.item(item)
+                time_str = item_data['values'][0]
+                try:
+                    start_time = int(time_str.split(":")[0]) * 60000 + int(time_str.split(":")[1]) * 1000
+                except Exception:
+                    start_time = -1
+                if start_time <= current_position:
+                    last_index = item
+                else:
+                    break
             
-            tree.selection_set(last_index)
-            tree.see(last_index)
+            if last_index:
+                # Highlight the current line
+                tags = list(tree.item(last_index)['tags'])
+                if 'current' not in tags:
+                    tags.append('current')
+                    tree.item(last_index, tags=tags)
+                
+                tree.selection_set(last_index)
+                tree.see(last_index)
 
         # Update floating window if it exists
         if floating_window and floating_window.is_open():
-            # Use the same source as the main window (Treeview) for current line
-            if last_index:
-                item_values = tree.item(last_index)['values']
-                current_line = {
-                    'words': item_values[1],
-                    'translated': item_values[2]
-                }
+            if lyrics_synced:
+                # Use the same source as the main window (Treeview) for current line
+                if last_index:
+                    item_values = tree.item(last_index)['values']
+                    current_line = {
+                        'words': item_values[1],
+                        'translated': item_values[2]
+                    }
+                else:
+                    current_line = None
+                song_duration = current_song['item']['duration_ms'] if current_song and 'item' in current_song else 0
+                floating_window.update_lyrics(current_song_name, current_line, current_position, song_duration)
             else:
-                current_line = None
-            song_duration = current_song['item']['duration_ms'] if current_song and 'item' in current_song else 0
-            floating_window.update_lyrics(current_song_name, current_line, current_position, song_duration)
+                # Unsynced: clear text and avoid progression
+                floating_window.update_lyrics(current_song_name, None, 0, 0)
         
     else:
         # No song playing or not authenticated yet
         current_time_label.config(text="0:00")
-        current_song_label.config(text="No song playing")
+        # Try to provide a more helpful hint based on device status
+        hint_shown = False
+        try:
+            if spotify_client:
+                status = spotify_client.get_device_status()
+                devices = status.get('devices', []) if status else []
+                active = status.get('active_device') if status else None
+                if devices and not active:
+                    current_song_label.config(text="No active device")
+                    try:
+                        status_label.config(text="Open Spotify and press Play, or select a device")
+                    except Exception:
+                        pass
+                    hint_shown = True
+                elif not devices:
+                    current_song_label.config(text="No Spotify devices found")
+                    try:
+                        status_label.config(text="Open Spotify on any device and play a track")
+                    except Exception:
+                        pass
+                    hint_shown = True
+        except Exception:
+            hint_shown = False
+        if not hint_shown:
+            current_song_label.config(text="No song playing")
 
     root.after(500, update_display)
 
 # Function to update the lyrics in the Treeview
 def update_lyrics():
-    global current_song_id, current_lyrics, current_song_name, language
+    global current_song_id, current_lyrics, current_song_name, language, lyrics_synced
 
     try:
         # Get current playback
         current_playback, _ = get_current_playback_position()
         if not current_playback or not current_playback['item']:
             print("[DEBUG] update_lyrics: No current playback or item, returning")
-            status_label.config(text="No song playing")
+            # Show a friendly hint if possible
+            try:
+                if spotify_client:
+                    status = spotify_client.get_device_status()
+                    devices = status.get('devices', []) if status else []
+                    active = status.get('active_device') if status else None
+                    if devices and not active:
+                        status_label.config(text="No active device. Press Play or select a device")
+                    elif not devices:
+                        status_label.config(text="No Spotify devices found. Open Spotify and play a track")
+                    else:
+                        status_label.config(text="No song playing")
+                else:
+                    status_label.config(text="No song playing")
+            except Exception:
+                status_label.config(text="No song playing")
             return
 
         song_id = current_playback['item']['id']
@@ -257,9 +323,20 @@ def update_lyrics():
         # Update status
         status_label.config(text="Loading lyrics...")
         
-        # Get lyrics
-        lyrics = spotify_client.get_lyrics(song_id) if spotify_client else None
+        # Get lyrics via service with fast retries and fallback
+        lyrics = None
+        if spotify_client and lyrics_service:
+            meta_dict, _ = spotify_client.get_current_track_metadata()
+            if meta_dict:
+                track_meta = TrackMetadata(
+                    track_name=meta_dict['track_name'],
+                    artist_name=meta_dict['artist_name'],
+                    album_name=meta_dict['album_name'],
+                    duration_ms=meta_dict['duration_ms'],
+                )
+                lyrics = lyrics_service.get_lyrics(track_meta, song_id)
         lyrics_data = lyrics['lyrics']['lines'] if lyrics and 'lyrics' in lyrics and 'lines' in lyrics['lyrics'] else None
+        lyrics_synced = (lyrics and lyrics.get('lyrics', {}).get('synced', True))
         print(f"[DEBUG] update_lyrics: Retrieved lyrics data, has_lyrics={lyrics_data is not None}, lyrics_count={len(lyrics_data) if lyrics_data else 0}")
 
         # Clear existing treeview items
@@ -281,11 +358,24 @@ def update_lyrics():
             # Populate Treeview from current_lyrics with alternating row colors
             for i, lyric in enumerate(current_lyrics):
                 tag = 'evenrow' if i % 2 == 0 else 'oddrow'
-                tree.insert("", "end", values=(
-                    lyrics_manager.ms_to_min_sec(lyric['startTimeMs']), 
-                    lyric['words'], 
-                    lyric['translated']
-                ), tags=(tag,))
+                time_text = lyrics_manager.ms_to_min_sec(lyric['startTimeMs']) if lyrics_synced else ""
+                tree.insert("", "end", values=(time_text, lyric['words'], lyric['translated']), tags=(tag,))
+            
+            # Toggle unsynced banner and Time heading/column
+            try:
+                if lyrics_synced:
+                    unsynced_banner_frame.pack_forget()
+                    unsynced_banner_frame._packed = False
+                    tree.heading("Time", text="  Time")
+                else:
+                    unsynced_banner_label.config(text="Lyrics are not time-synced.")
+                    if not getattr(unsynced_banner_frame, '_packed', False):
+                        # Place banner above the lyrics table
+                        unsynced_banner_frame.pack(before=frame, fill=tk.X, padx=20, pady=(10, 5))
+                        unsynced_banner_frame._packed = True
+                    tree.heading("Time", text="")
+            except Exception:
+                pass
             
             # Check cache first
             cached = lyrics_manager.get_cached_lyrics(song_id)
@@ -328,27 +418,35 @@ def update_lyrics():
 
 # Function to update the Treeview with translated lyrics from current_lyrics
 def update_translations():
-    global current_lyrics
+    global current_lyrics, lyrics_synced
 
     # Rebuild the translated lyrics column from current_lyrics
     updated_count = 0
     for i, item in enumerate(tree.get_children()):
         item_data = tree.item(item)
-        start_time = item_data['values'][0]
-        original_lyrics = item_data['values'][1]
-
-        # Find matching lyric in current_lyrics
-        for lyric in current_lyrics:
-            if lyrics_manager.ms_to_min_sec(lyric['startTimeMs']) == start_time and lyric['words'] == original_lyrics:
-                # Update the translated lyrics in the treeview
+        if lyrics_synced:
+            start_time = item_data['values'][0]
+            original_lyrics = item_data['values'][1]
+            # Find matching lyric in current_lyrics
+            for lyric in current_lyrics:
+                if lyrics_manager.ms_to_min_sec(lyric['startTimeMs']) == start_time and lyric['words'] == original_lyrics:
+                    current_values = list(tree.item(item)['values'])
+                    current_values[2] = lyric['translated']
+                    tree.item(item, values=current_values)
+                    updated_count += 1
+                    if lyric['translated']:
+                        _highlight_translation(item)
+                    break
+        else:
+            # Unsynced: update by row index
+            if i < len(current_lyrics):
+                lyric = current_lyrics[i]
                 current_values = list(tree.item(item)['values'])
-                current_values[2] = lyric['translated']  # Update the translated lyrics column
+                current_values[2] = lyric.get('translated', '')
                 tree.item(item, values=current_values)
-                updated_count += 1
-                # Add a subtle highlight animation for newly translated lines
-                if lyric['translated']:
+                if lyric.get('translated'):
+                    updated_count += 1
                     _highlight_translation(item)
-                break
 
     print(f"[DEBUG] update_translations: Updated {updated_count} translated lyrics in Treeview")
 
@@ -412,7 +510,7 @@ def find_longest_line_lengths():
 
 # Function to adjust the column widths based on the content
 def adjust_column_widths():
-    min_time_width = 100
+    min_time_width = 0 if not lyrics_synced else 100
     max_original_length, max_translated_length, line_count = find_longest_line_lengths()
 
     root.update_idletasks()
@@ -495,6 +593,18 @@ SPOTIFY_GREEN_ACTIVE = '#1AA34A'
 
 # Configure root background
 root.configure(bg=SPOTIFY_BLACK)
+
+# Unsynced banner (initially hidden)
+unsynced_banner_frame = tk.Frame(root, bg=SPOTIFY_DARK, height=30)
+unsynced_banner_label = tk.Label(
+    unsynced_banner_frame,
+    text="Lyrics are not time-synced.",
+    font=('Circular Std', 11, 'bold'),
+    fg=SPOTIFY_LIGHT_GRAY,
+    bg=SPOTIFY_DARK
+)
+unsynced_banner_label.pack(side=tk.LEFT, padx=20, pady=6)
+unsynced_banner_frame._packed = False
 
 # Create header frame with app branding
 header_frame = tk.Frame(root, bg=SPOTIFY_DARK, height=80)
