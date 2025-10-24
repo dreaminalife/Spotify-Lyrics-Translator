@@ -357,7 +357,6 @@ def update_translations():
         first_few = current_lyrics[:3]
         for i, lyric in enumerate(first_few):
             translated = lyric.get('translated', '')[:50]
-            print(f"[DEBUG] update_translations: Line {i+1}: translated='{translated}...'")
 
     adjust_column_widths()
 

@@ -141,14 +141,11 @@ class FloatingLyricsWindow:
             position_ms: Current playback position in milliseconds
             duration_ms: Total song duration in milliseconds
         """
-        print(f"[DEBUG] floating_window.update_lyrics: song_name='{song_name}', current_line={current_line is not None}, position_ms={position_ms}, duration_ms={duration_ms}")
 
         if song_name:
             self.song_label.config(text=song_name)
-            print(f"[DEBUG] floating_window.update_lyrics: Set song name to '{song_name}'")
         else:
             self.song_label.config(text="No song playing")
-            print(f"[DEBUG] floating_window.update_lyrics: Set song name to 'No song playing'")
 
         if current_line:
             original_text = current_line.get('words', '')
@@ -243,7 +240,6 @@ class FloatingLyricsWindow:
             progress_width = int((self.current_position / self.song_duration) * self.progress_bg.winfo_width())
             self.progress_bar.place(x=0, y=0, width=progress_width, height=4)
             progress_value = (self.current_position / self.song_duration) * 100
-            print(f"[DEBUG] _update_progress_bar: Set progress bar to {progress_value:.1f}%")
     
     def fade_in(self, step=0.05, target_alpha=0.9):
         """Fade in the window with a smooth animation.
