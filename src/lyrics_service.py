@@ -20,6 +20,7 @@ class LyricsService:
         spotify_track_id: Optional[str] = None,
         per_attempt_timeout_syrics: float = 0.5,
         per_attempt_timeout_lrclib: float = 0.9,
+        per_attempt_timeout_web: float = 18.0,
     ) -> Optional[dict]:
         # Retry policy: initial + 2 retries (total 3 attempts) per provider
         delays = [0.0, 0.15]  # between attempts
@@ -31,10 +32,21 @@ class LyricsService:
             provider_name = provider.__class__.__name__
             logging.info(f"Trying provider: {provider_name} for {track_info}")
 
+            # Default attempts: initial + retries. Special-case UtaNet to 1 attempt
             attempts = 1 + len(delays)
+            if 'UtaNet' in provider_name:
+                attempts = 1
             for i in range(attempts):
                 attempt_num = i + 1
-                timeout = per_attempt_timeout_syrics if 'Syrics' in provider.__class__.__name__ else per_attempt_timeout_lrclib
+                name = provider.__class__.__name__
+                if 'Syrics' in name:
+                    timeout = per_attempt_timeout_syrics
+                elif 'LRCLib' in name:
+                    timeout = per_attempt_timeout_lrclib
+                elif 'UtaNet' in name:
+                    timeout = per_attempt_timeout_web
+                else:
+                    timeout = per_attempt_timeout_lrclib
                 logging.debug(f"Provider {provider_name} attempt {attempt_num}/{attempts} (timeout: {timeout}s)")
 
                 fut = self._executor.submit(provider.get_lyrics, track, spotify_track_id)

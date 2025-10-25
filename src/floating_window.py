@@ -156,7 +156,6 @@ class FloatingLyricsWindow:
             self._transition_text(self.translated_label, translated_text)
             self.current_line = current_line
         else:
-            print(f"[DEBUG] floating_window.update_lyrics: No current line, clearing display")
             self._transition_text(self.original_label, "")
             self._transition_text(self.translated_label, "")
             self.current_line = None

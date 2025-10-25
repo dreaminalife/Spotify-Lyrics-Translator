@@ -57,7 +57,6 @@ class SpotifyClient:
                 devices = devices_resp.get('devices', []) if devices_resp else []
                 all_names = [d.get('name') for d in devices]
                 active_names = [d.get('name') for d in devices if d.get('is_active')]
-                print(f"No playback available. Devices detected: {all_names}, active: {active_names}")
             except Exception as de:
                 print(f"Error fetching devices: {de}")
 

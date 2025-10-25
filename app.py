@@ -8,7 +8,7 @@ from src.spotify_client import SpotifyClient
 from src.lyrics_manager import LyricsManager
 from src.floating_window import FloatingLyricsWindow
 from src.lyrics_models import TrackMetadata
-from src.lyrics_providers import SyricsLyricsProvider, LRCLibLyricsProvider
+from src.lyrics_providers import SyricsLyricsProvider, LRCLibLyricsProvider, UtaNetLyricsProvider
 from src.lyrics_service import LyricsService
 from src.settings_manager import read_secrets, validate_secrets
 from src.translation_clients import GoogleTranslateClient, OpenRouterClient
@@ -60,6 +60,8 @@ def init_spotify_client(settings):
             SyricsLyricsProvider(spotify_client.syrics_sp),
             LRCLibLyricsProvider("Lyrics-Translator/0.1 (https://github.com/)")
         ]
+        # Add UtaNet provider as last fallback (search + log only for now)
+        providers.append(UtaNetLyricsProvider())
         lyrics_service = LyricsService(providers)
     except Exception as e:
         print(f"Error initializing Spotify client: {e}")
@@ -360,6 +362,12 @@ def update_lyrics():
                 tag = 'evenrow' if i % 2 == 0 else 'oddrow'
                 time_text = lyrics_manager.ms_to_min_sec(lyric['startTimeMs']) if lyrics_synced else ""
                 tree.insert("", "end", values=(time_text, lyric['words'], lyric['translated']), tags=(tag,))
+
+            # Ensure the UI renders original lyrics immediately before translation starts
+            try:
+                root.update_idletasks()
+            except Exception:
+                pass
             
             # Toggle unsynced banner and Time heading/column
             try:
