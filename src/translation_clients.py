@@ -188,9 +188,24 @@ def fetch_openrouter_models(api_key: str) -> List[Dict[str, Any]]:
         context = tp.get("context_length") or item.get("context_length")
 
         # Pricing can vary in structure; try common keys
+        # OpenRouter returns per-token costs, convert to per-million-tokens for display
         pricing = item.get("pricing") or {}
-        prompt_cost = pricing.get("prompt") or pricing.get("input") or pricing.get("per_1m_prompt_tokens")
-        completion_cost = pricing.get("completion") or pricing.get("output") or pricing.get("per_1m_completion_tokens")
+        prompt_cost_raw = pricing.get("prompt") or pricing.get("input") or pricing.get("per_1m_prompt_tokens")
+        completion_cost_raw = pricing.get("completion") or pricing.get("output") or pricing.get("per_1m_completion_tokens")
+
+        # Convert per-token costs to per-million-token costs
+        prompt_cost = None
+        completion_cost = None
+        if prompt_cost_raw is not None:
+            try:
+                prompt_cost = float(prompt_cost_raw) * 1000000
+            except (ValueError, TypeError):
+                prompt_cost = prompt_cost_raw
+        if completion_cost_raw is not None:
+            try:
+                completion_cost = float(completion_cost_raw) * 1000000
+            except (ValueError, TypeError):
+                completion_cost = completion_cost_raw
 
         # Vision support if image modality present
         arch = item.get("architecture") or {}
