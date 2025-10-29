@@ -235,7 +235,11 @@ def update_display():
                     tree.item(last_index, tags=tags)
                 
                 tree.selection_set(last_index)
-                tree.see(last_index)
+                
+                # Only auto-scroll when the song is playing, not when paused
+                is_playing = current_song.get('is_playing', False)
+                if is_playing:
+                    tree.see(last_index)
 
         # Update floating window if it exists
         if floating_window and floating_window.is_open():
