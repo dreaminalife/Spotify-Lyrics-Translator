@@ -499,11 +499,14 @@ def update_lyrics():
                 ).start()
         elif lyrics is None:
             # Could be an auth error or API error; handled elsewhere
-            status_label.config(text="Error loading lyrics")
+            current_lyrics_source = "unknown"
+            current_translation_source = "unknown"
+            status_label.config(text="No lyrics found")
+            update_column_headers()
         else:
             print("[DEBUG] update_lyrics: No lyrics data available for this song")
             status_label.config(text="No lyrics available")
-            tree.insert("", "end", values=("0:00", "(No lyrics)", ""), tags=('evenrow',))
+            tree.insert("", "end", values=("0:00", "(No lyrics found)", ""), tags=('evenrow',))
             current_lyrics = []
         
         adjust_column_widths()
