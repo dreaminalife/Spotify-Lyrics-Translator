@@ -19,6 +19,11 @@ class BaseTranslationClient(ABC):
         """
         raise NotImplementedError
 
+    @abstractmethod
+    def get_source_name(self) -> str:
+        """Return the name of the translation source/client."""
+        raise NotImplementedError
+
 
 class GoogleTranslateClient(BaseTranslationClient):
     """Google Translate implementation using deep_translator."""
@@ -40,6 +45,10 @@ class GoogleTranslateClient(BaseTranslationClient):
             else:
                 results = results[: len(lines)]
         return results
+
+    def get_source_name(self) -> str:
+        """Return the name of the translation source."""
+        return "Google Translate"
 
 
 class OpenRouterClient(BaseTranslationClient):
@@ -147,6 +156,13 @@ class OpenRouterClient(BaseTranslationClient):
             raise RuntimeError("Unexpected OpenRouter response format.")
 
         return self._normalize_lines(content or "", expected_count=len(lines), original_lines=lines)
+
+    def get_source_name(self) -> str:
+        """Return the model name from the model string."""
+        # Extract model name from format like "openai/gpt-4" -> "gpt-4"
+        if "/" in self.model:
+            return self.model.split("/")[-1]
+        return self.model
 
 
 # ----------- Utility: OpenRouter models discovery and display formatting -----------

@@ -39,6 +39,8 @@ language = ""
 floating_window = None
 lyrics_synced = True
 last_current_line = None
+current_lyrics_source = "Unknown"
+current_translation_source = "Unknown"
 
 
 def init_spotify_client(settings):
@@ -73,6 +75,7 @@ def init_spotify_client(settings):
 
 
 def init_translation_client():
+    global current_translation_source
     settings = read_translation_settings()
     models_body = read_models_config()
     secrets = read_secrets()
@@ -93,6 +96,7 @@ def init_translation_client():
                 prompt_template=prompt,
                 model_body=body,
             )
+            current_translation_source = lyrics_manager.translation_client.get_source_name()
             try:
                 status_label.config(text="Translation: OpenRouter ready")
             except Exception:
@@ -100,16 +104,19 @@ def init_translation_client():
         except Exception as e:
             print(f"Error initializing OpenRouter client: {e}")
             lyrics_manager.translation_client = GoogleTranslateClient()
+            current_translation_source = lyrics_manager.translation_client.get_source_name()
             try:
                 status_label.config(text="Translation fallback: Google Translate")
             except Exception:
                 pass
     else:
         lyrics_manager.translation_client = GoogleTranslateClient()
+        current_translation_source = lyrics_manager.translation_client.get_source_name()
         try:
             status_label.config(text="Translation: Google Translate")
         except Exception:
             pass
+    update_column_headers()
 
 
 def open_settings_modal(prefill=None):
@@ -160,12 +167,16 @@ def merge_translations_into_current(translated_lyrics):
     """Merge translated lyrics into current_lyrics in place.
 
     Args:
-        translated_lyrics: List of translated lyric dictionaries
+        translated_lyrics: List of translated lyric dictionaries (or dict with 'lyrics' key for cache format)
 
     Returns:
         int: Number of lines updated
     """
     global current_lyrics
+
+    # Handle new cache format: dict with 'lyrics' key
+    if isinstance(translated_lyrics, dict) and 'lyrics' in translated_lyrics:
+        translated_lyrics = translated_lyrics['lyrics']
 
     # Create lookup dict for current_lyrics by (startTimeMs, words) for efficient merging
     current_lookup = {(lyric['startTimeMs'], lyric['words']): lyric for lyric in current_lyrics}
@@ -304,8 +315,24 @@ def update_display():
     root.after(poll_interval, update_display)
 
 # Function to update the lyrics in the Treeview
+def update_column_headers():
+    """Update column headers to display source information."""
+    try:
+        lyrics_header = f"  Original Lyrics"
+        if current_lyrics_source != "Unknown":
+            lyrics_header += f" ({current_lyrics_source})"
+        tree.heading("Original Lyrics", text=lyrics_header)
+
+        translation_header = f"  Translated Lyrics"
+        if current_translation_source != "Unknown":
+            translation_header += f" ({current_translation_source})"
+        tree.heading("Translated Lyrics", text=translation_header)
+    except Exception:
+        pass
+
 def update_lyrics():
     global current_song_id, current_lyrics, current_song_name, language, lyrics_synced
+    global current_lyrics_source, current_translation_source
 
     try:
         # Get current playback
@@ -356,7 +383,9 @@ def update_lyrics():
                 lyrics = lyrics_service.get_lyrics(track_meta, song_id)
         lyrics_data = lyrics['lyrics']['lines'] if lyrics and 'lyrics' in lyrics and 'lines' in lyrics['lyrics'] else None
         lyrics_synced = (lyrics and lyrics.get('lyrics', {}).get('synced', True))
-        print(f"[DEBUG] update_lyrics: Retrieved lyrics data, has_lyrics={lyrics_data is not None}, lyrics_count={len(lyrics_data) if lyrics_data else 0}")
+        # Extract lyrics source from response
+        current_lyrics_source = lyrics.get('source', 'Unknown') if lyrics else 'Unknown'
+        print(f"[DEBUG] update_lyrics: Retrieved lyrics data, has_lyrics={lyrics_data is not None}, lyrics_count={len(lyrics_data) if lyrics_data else 0}, source={current_lyrics_source}")
 
         # Clear existing treeview items
         tree.delete(*tree.get_children())
@@ -365,7 +394,8 @@ def update_lyrics():
             # Detect the language of the first line of lyrics
             detected_lang = lyrics['lyrics']['language']
             language = detected_lang
-            tree.heading("Original Lyrics", text=f"  Original Lyrics ({detected_lang})")
+            # Update column headers with source info
+            update_column_headers()
 
             # Initialize current_lyrics as single source of truth with original lyrics
             current_lyrics = [
@@ -405,7 +435,11 @@ def update_lyrics():
             # Check cache first
             cached = lyrics_manager.get_cached_lyrics(song_id)
             if cached:
-                print(f"[DEBUG] update_lyrics: Using cached lyrics for song {song_id}, length={len(cached)}")
+                print(f"[DEBUG] update_lyrics: Using cached lyrics for song {song_id}, length={len(cached.get('lyrics', []))}")
+                # Update source info from cache
+                current_lyrics_source = cached.get('lyrics_source', current_lyrics_source)
+                current_translation_source = cached.get('translation_source', current_translation_source)
+                update_column_headers()
                 status_label.config(text="Using cached translations")
                 merge_translations_into_current(cached)
                 # Schedule UI update on main thread
@@ -416,6 +450,13 @@ def update_lyrics():
                 # Translate in background thread
                 def translate_callback(translated):
                     print(f"[DEBUG] translate_callback: Translation completed for song {song_id}, received {len(translated)} lines")
+                    # Update translation source from current client
+                    global current_translation_source
+                    try:
+                        current_translation_source = lyrics_manager.translation_client.get_source_name()
+                    except Exception:
+                        current_translation_source = "Unknown"
+                    update_column_headers()
                     status_label.config(text="Translation complete")
                     merge_translations_into_current(translated)
                     # Schedule UI update on main thread
@@ -425,7 +466,7 @@ def update_lyrics():
 
                 threading.Thread(
                     target=lyrics_manager.translate_lyrics,
-                    args=(lyrics_data, song_id, translate_callback)
+                    args=(lyrics_data, song_id, current_lyrics_source, translate_callback)
                 ).start()
         elif lyrics is None:
             # Could be an auth error or API error; handled elsewhere
@@ -824,6 +865,7 @@ style.map(
 tree.heading("Time", text="  Time", anchor='w')
 tree.heading("Original Lyrics", text="  Original Lyrics", anchor='w')
 tree.heading("Translated Lyrics", text="  Translated Lyrics", anchor='w')
+# Initial column headers will be updated by update_column_headers() when sources are known
 
 # Configure columns with better proportions
 tree.column("Time", width=100, minwidth=80, anchor='w')

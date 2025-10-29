@@ -69,22 +69,45 @@ class LyricsManager:
             song_id: Spotify track ID
             
         Returns:
-            list: Cached translated lyrics or None if not in cache
+            dict: Cache entry with 'lyrics', 'lyrics_source', and 'translation_source' keys,
+                  or None if not in cache. For backward compatibility, old format (list) is
+                  converted to new format with 'Unknown' sources.
         """
         cached = self.cache.get(song_id)
         if cached:
-            try:
-                cached.sort(key=lambda x: int(x['startTimeMs']))
-            except Exception as e:
-                print(f"[DEBUG] get_cached_lyrics: Sort failed: {e}")
-        return cached
+            # Handle backward compatibility: old cache format was just a list
+            if isinstance(cached, list):
+                # Convert old format to new format
+                try:
+                    cached.sort(key=lambda x: int(x['startTimeMs']))
+                except Exception as e:
+                    print(f"[DEBUG] get_cached_lyrics: Sort failed: {e}")
+                return {
+                    'lyrics': cached,
+                    'lyrics_source': 'Unknown',
+                    'translation_source': 'Unknown'
+                }
+            # New format: dict with lyrics, lyrics_source, translation_source
+            elif isinstance(cached, dict):
+                lyrics = cached.get('lyrics', [])
+                try:
+                    lyrics.sort(key=lambda x: int(x['startTimeMs']))
+                except Exception as e:
+                    print(f"[DEBUG] get_cached_lyrics: Sort failed: {e}")
+                return {
+                    'lyrics': lyrics,
+                    'lyrics_source': cached.get('lyrics_source', 'Unknown'),
+                    'translation_source': cached.get('translation_source', 'Unknown')
+                }
+        return None
     
-    def translate_lyrics(self, lyrics_data, song_id, callback=None):
+    def translate_lyrics(self, lyrics_data, song_id, lyrics_source: str = "Unknown", callback=None):
         """Translate lyrics using multithreading.
         
         Args:
             lyrics_data: List of lyric lines with startTimeMs and words
             song_id: Spotify track ID for caching
+            lyrics_source: Source name of the lyrics provider (e.g., "Spotify", "LRCLib")
             callback: Optional callback function to call with results
             
         Returns:
@@ -105,6 +128,13 @@ class LyricsManager:
             # Fallback: keep originals on error
             translated_lines = original_lines
 
+        # Get translation source name
+        translation_source = "Unknown"
+        try:
+            translation_source = self.translation_client.get_source_name()
+        except Exception as e:
+            print(f"Error getting translation source name: {e}")
+
         # Merge into lyric dicts
         translated_lyrics = []
         for src, translated_text in zip(ordered, translated_lines):
@@ -116,8 +146,12 @@ class LyricsManager:
         
         # Already ordered
         
-        # Store in cache
-        self.cache[song_id] = translated_lyrics
+        # Store in cache with source info
+        self.cache[song_id] = {
+            'lyrics': translated_lyrics,
+            'lyrics_source': lyrics_source,
+            'translation_source': translation_source
+        }
         
         # Ensure cache size doesn't exceed limit
         if len(self.cache) > self.max_cache_size:

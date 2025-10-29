@@ -26,6 +26,7 @@ class LyricsPayload:
     language: str
     lines: List[LyricsLine]
     synced: bool
+    source: str = "Unknown"
 
     def to_api_dict(self) -> Dict[str, Any]:
         return {
@@ -33,7 +34,8 @@ class LyricsPayload:
                 "language": self.language,
                 "lines": [line.to_dict() for line in self.lines],
                 "synced": self.synced,
-            }
+            },
+            "source": self.source,
         }
 
 

@@ -61,7 +61,7 @@ class SyricsLyricsProvider:
 
         logging.info(f"SyricsLyricsProvider: Lyrics source - Spotify (Syrics API)")
         logging.debug(f"SyricsLyricsProvider: Successfully parsed {len(lines)} lyrics lines")
-        return LyricsPayload(language=language, lines=lines, synced=True)
+        return LyricsPayload(language=language, lines=lines, synced=True, source="Spotify")
 
 
 class LRCLibLyricsProvider:
@@ -120,7 +120,7 @@ class LRCLibLyricsProvider:
             lines = self._parse_lrc(synced)
             if lines:
                 logging.info(f"LRCLibLyricsProvider: Successfully parsed {len(lines)} synced lyrics lines")
-                return LyricsPayload(language=language, lines=lines, synced=True)
+                return LyricsPayload(language=language, lines=lines, synced=True, source="LRCLib")
             else:
                 logging.debug("LRCLibLyricsProvider: Failed to parse synced lyrics")
 
@@ -128,7 +128,7 @@ class LRCLibLyricsProvider:
             lines = self._plain_to_synthetic(plain, track.duration_ms)
             if lines:
                 logging.info(f"LRCLibLyricsProvider: Successfully parsed {len(lines)} plain lyrics lines with synthetic timing")
-                return LyricsPayload(language=language, lines=lines, synced=False)
+                return LyricsPayload(language=language, lines=lines, synced=False, source="LRCLib")
             else:
                 logging.debug("LRCLibLyricsProvider: Failed to parse plain lyrics")
 
@@ -364,7 +364,7 @@ class UtaNetLyricsProvider:
             lines = self._plain_to_synthetic(selected_lyrics, track.duration_ms)
             if lines:
                 logging.info("UtaNetLyricsProvider: Returning lyrics from Uta-Net search result")
-                return LyricsPayload(language='ja', lines=lines, synced=False)
+                return LyricsPayload(language='ja', lines=lines, synced=False, source="Uta-Net")
 
         logging.info("UtaNetLyricsProvider: No lyrics match from Uta-Net")
         return None
