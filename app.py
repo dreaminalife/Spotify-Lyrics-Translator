@@ -819,11 +819,8 @@ tree.tag_configure('translated', foreground=SPOTIFY_LIGHT_GRAY)
 tree.tag_configure('highlight', background=SPOTIFY_GREEN, foreground=SPOTIFY_WHITE)
 
 # Create custom scrollbar with modern styling
-scrollbar_frame = tk.Frame(frame, bg=SPOTIFY_BLACK, width=15)
-scrollbar_frame.pack(side='right', fill='y')
-
 scrollbar = ttk.Scrollbar(
-    scrollbar_frame,
+    frame,
     orient="vertical",
     command=tree.yview,
     style="Spotify.Vertical.TScrollbar"
@@ -840,9 +837,12 @@ style.configure(
     lightcolor=SPOTIFY_GRAY
 )
 
+# Connect the scrollbar to the treeview
 tree.configure(yscrollcommand=scrollbar.set)
+
+# Pack the treeview and scrollbar correctly
 tree.pack(side='left', fill=tk.BOTH, expand=True)
-scrollbar.pack(fill='y')
+scrollbar.pack(side='right', fill='y')
 
 # Initialize settings and client
 ensure_settings_and_init()
