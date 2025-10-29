@@ -38,6 +38,7 @@ current_song_name = ""
 language = ""
 floating_window = None
 lyrics_synced = True
+last_current_line = None
 
 
 def init_spotify_client(settings):
@@ -187,21 +188,27 @@ def get_current_playback_position():
 
 # Function to update the Treeview and the current time label
 def update_display():
-    global current_song_id, floating_window, lyrics_synced
+    global current_song_id, floating_window, lyrics_synced, last_current_line
     current_song, current_position = get_current_playback_position()
 
+    # Get playback state to determine update behavior
+    is_playing = current_song.get('is_playing', False) if current_song else False
 
-    # Clear previous current line highlighting
-    for item in tree.get_children():
-        tags = list(tree.item(item)['tags'])
-        if 'current' in tags:
-            tags.remove('current')
-            tree.item(item, tags=tags)
+    # Only clear and re-highlight current line when song is playing
+    if is_playing:
+        # Clear previous current line highlighting
+        for item in tree.get_children():
+            tags = list(tree.item(item)['tags'])
+            if 'current' in tags:
+                tags.remove('current')
+                tree.item(item, tags=tags)
 
     if current_song:
         song_id = current_song['item']['id']
         if song_id != current_song_id:
             current_song_id = song_id
+            global last_current_line
+            last_current_line = None  # Clear last current line when switching songs
             update_lyrics()
 
         # Update current time label with modern format
@@ -210,11 +217,11 @@ def update_display():
         # Update current song label
         song_name = current_song['item']['name']
         artist_name = current_song['item']['artists'][0]['name'] if current_song['item']['artists'] else "Unknown Artist"
-        current_song_label.config(text=f"{song_name} • {artist_name}")
+        current_song_var.set(f"{song_name} • {artist_name}")
 
-        # Update main window treeview selection and highlight current line (only when synced)
+        # Update main window treeview selection and highlight current line (only when synced and playing)
         last_index = None
-        if lyrics_synced:
+        if lyrics_synced and is_playing:
             for item in tree.get_children():
                 item_data = tree.item(item)
                 time_str = item_data['values'][0]
@@ -226,24 +233,20 @@ def update_display():
                     last_index = item
                 else:
                     break
-            
+
             if last_index:
                 # Highlight the current line
                 tags = list(tree.item(last_index)['tags'])
                 if 'current' not in tags:
                     tags.append('current')
                     tree.item(last_index, tags=tags)
-                
+
                 tree.selection_set(last_index)
-                
-                # Only auto-scroll when the song is playing, not when paused
-                is_playing = current_song.get('is_playing', False)
-                if is_playing:
-                    tree.see(last_index)
+                tree.see(last_index)
 
         # Update floating window if it exists
         if floating_window and floating_window.is_open():
-            if lyrics_synced:
+            if lyrics_synced and is_playing:
                 # Use the same source as the main window (Treeview) for current line
                 if last_index:
                     item_values = tree.item(last_index)['values']
@@ -251,12 +254,19 @@ def update_display():
                         'words': item_values[1],
                         'translated': item_values[2]
                     }
+                    last_current_line = current_line  # Update last current line
                 else:
                     current_line = None
+                    last_current_line = None
                 song_duration = current_song['item']['duration_ms'] if current_song and 'item' in current_song else 0
                 floating_window.update_lyrics(current_song_name, current_line, current_position, song_duration)
+            elif not is_playing and lyrics_synced:
+                # When paused, keep displaying the last current line
+                song_duration = current_song['item']['duration_ms'] if current_song and 'item' in current_song else 0
+                floating_window.update_lyrics(current_song_name, last_current_line, current_position, song_duration)
             else:
-                # Unsynced: clear text and avoid progression
+                # Unsynced or no song: clear text and avoid progression
+                last_current_line = None
                 floating_window.update_lyrics(current_song_name, None, 0, 0)
         
     else:
@@ -270,14 +280,14 @@ def update_display():
                 devices = status.get('devices', []) if status else []
                 active = status.get('active_device') if status else None
                 if devices and not active:
-                    current_song_label.config(text="No active device")
+                    current_song_var.set("No active device")
                     try:
                         status_label.config(text="Open Spotify and press Play, or select a device")
                     except Exception:
                         pass
                     hint_shown = True
                 elif not devices:
-                    current_song_label.config(text="No Spotify devices found")
+                    current_song_var.set("No Spotify devices found")
                     try:
                         status_label.config(text="Open Spotify on any device and play a track")
                     except Exception:
@@ -286,9 +296,12 @@ def update_display():
         except Exception:
             hint_shown = False
         if not hint_shown:
-            current_song_label.config(text="No song playing")
+            current_song_var.set("No song playing")
 
-    root.after(500, update_display)
+    # Schedule next update with different intervals based on playback state
+    # Poll more frequently when playing (500ms), less frequently when paused (3000ms)
+    poll_interval = 500 if (current_song and current_song.get('is_playing', False)) else 3000
+    root.after(poll_interval, update_display)
 
 # Function to update the lyrics in the Treeview
 def update_lyrics():
@@ -650,13 +663,20 @@ app_title.pack(side=tk.LEFT)
 song_info_frame = tk.Frame(header_frame, bg=SPOTIFY_DARK)
 song_info_frame.pack(side=tk.RIGHT, padx=20, pady=15)
 
-# Current song label (will be updated when song changes)
-current_song_label = tk.Label(
+# Current song label as read-only Entry to allow selection/copy
+current_song_var = tk.StringVar(value="No song playing")
+current_song_label = tk.Entry(
     song_info_frame,
-    text="No song playing",
+    textvariable=current_song_var,
     font=('Circular Std', 14),
     fg=SPOTIFY_LIGHT_GRAY,
-    bg=SPOTIFY_DARK
+    bg=SPOTIFY_DARK,
+    readonlybackground=SPOTIFY_DARK,
+    relief=tk.FLAT,
+    state="readonly",
+    borderwidth=0,
+    highlightthickness=0,
+    insertbackground=SPOTIFY_LIGHT_GRAY
 )
 current_song_label.pack()
 
@@ -768,7 +788,8 @@ tree = ttk.Treeview(
     frame, 
     columns=("Time", "Original Lyrics", "Translated Lyrics"), 
     show="headings",
-    style="Spotify.Treeview"
+    style="Spotify.Treeview",
+    selectmode="extended"
 )
 
 # Configure Treeview style with Spotify-inspired colors
@@ -847,6 +868,25 @@ tree.configure(yscrollcommand=scrollbar.set)
 # Pack the treeview and scrollbar correctly
 tree.pack(side='left', fill=tk.BOTH, expand=True)
 scrollbar.pack(side='right', fill='y')
+
+# Enable Ctrl+C to copy selected Treeview rows to clipboard (tab-separated)
+def _copy_tree_selection(event=None):
+    items = tree.selection()
+    if not items:
+        return "break"
+    lines = []
+    for iid in items:
+        vals = tree.item(iid).get('values', [])
+        lines.append("\t".join(str(v) for v in vals if v is not None))
+    try:
+        root.clipboard_clear()
+        root.clipboard_append("\n".join(lines))
+    except Exception:
+        pass
+    return "break"
+
+tree.bind("<Control-c>", _copy_tree_selection)
+tree.bind("<Control-Insert>", _copy_tree_selection)
 
 # Initialize settings and client
 ensure_settings_and_init()
