@@ -228,7 +228,14 @@ def update_display():
         # Update current song label
         song_name = current_song['item']['name']
         artist_name = current_song['item']['artists'][0]['name'] if current_song['item']['artists'] else "Unknown Artist"
-        current_song_var.set(f"{song_name} • {artist_name}")
+        
+        # Check if we have a cached translation for this song title
+        original_title, translated_title = lyrics_manager.get_cached_title(song_id)
+        if original_title and translated_title and original_title != translated_title:
+            display_title = f"{original_title} ({translated_title})"
+            current_song_var.set(f"{display_title} • {artist_name}")
+        else:
+            current_song_var.set(f"{song_name} • {artist_name}")
 
         # Update main window treeview selection and highlight current line (only when synced and playing)
         last_index = None
@@ -270,11 +277,17 @@ def update_display():
                     current_line = None
                     last_current_line = None
                 song_duration = current_song['item']['duration_ms'] if current_song and 'item' in current_song else 0
-                floating_window.update_lyrics(current_song_name, current_line, current_position, song_duration)
+                
+                # Get translated title for floating window
+                original_title, translated_title = lyrics_manager.get_cached_title(song_id)
+                floating_window.update_lyrics(current_song_name, current_line, current_position, song_duration, translated_title)
             elif not is_playing and lyrics_synced:
                 # When paused, keep displaying the last current line
                 song_duration = current_song['item']['duration_ms'] if current_song and 'item' in current_song else 0
-                floating_window.update_lyrics(current_song_name, last_current_line, current_position, song_duration)
+                
+                # Get translated title for floating window
+                original_title, translated_title = lyrics_manager.get_cached_title(song_id)
+                floating_window.update_lyrics(current_song_name, last_current_line, current_position, song_duration, translated_title)
             else:
                 # Unsynced or no song: clear text and avoid progression
                 last_current_line = None
@@ -442,6 +455,14 @@ def update_lyrics():
                 update_column_headers()
                 status_label.config(text="Using cached translations")
                 merge_translations_into_current(cached)
+                
+                # Update song title with cached translation if available
+                original_title, translated_title = lyrics_manager.get_cached_title(song_id)
+                if original_title and translated_title and original_title != translated_title:
+                    display_title = f"{original_title} ({translated_title})"
+                    current_song_var.set(f"{display_title} • {artist_name}")
+                    root.title(f"{display_title} • {artist_name} - Spotify Lyrics Translator")
+                
                 # Schedule UI update on main thread
                 root.after(0, update_translations)
             else:
@@ -459,6 +480,14 @@ def update_lyrics():
                     update_column_headers()
                     status_label.config(text="Translation complete")
                     merge_translations_into_current(translated)
+                    
+                    # Update song title with translation if available
+                    original_title, translated_title = lyrics_manager.get_cached_title(song_id)
+                    if original_title and translated_title and original_title != translated_title:
+                        display_title = f"{original_title} ({translated_title})"
+                        current_song_var.set(f"{display_title} • {artist_name}")
+                        root.title(f"{display_title} • {artist_name} - Spotify Lyrics Translator")
+                    
                     # Schedule UI update on main thread
                     root.after(0, update_translations)
                     # Reset status after a delay
@@ -466,7 +495,7 @@ def update_lyrics():
 
                 threading.Thread(
                     target=lyrics_manager.translate_lyrics,
-                    args=(lyrics_data, song_id, current_lyrics_source, translate_callback)
+                    args=(lyrics_data, song_id, current_lyrics_source, translate_callback, song_name)
                 ).start()
         elif lyrics is None:
             # Could be an auth error or API error; handled elsewhere

@@ -132,7 +132,7 @@ class FloatingLyricsWindow:
         y = self.window.winfo_y() + deltay
         self.window.geometry(f"+{x}+{y}")
     
-    def update_lyrics(self, song_name, current_line, position_ms=0, duration_ms=0):
+    def update_lyrics(self, song_name, current_line, position_ms=0, duration_ms=0, translated_title=None):
         """Update the displayed lyrics and progress bar.
 
         Args:
@@ -140,10 +140,16 @@ class FloatingLyricsWindow:
             current_line: Dictionary with 'words' and 'translated' keys, or None
             position_ms: Current playback position in milliseconds
             duration_ms: Total song duration in milliseconds
+            translated_title: Optional translated song title
         """
 
         if song_name:
-            self.song_label.config(text=song_name)
+            # Display both original and translated titles if available
+            if translated_title and translated_title != song_name:
+                display_title = f"{song_name} ({translated_title})"
+                self.song_label.config(text=display_title)
+            else:
+                self.song_label.config(text=song_name)
         else:
             self.song_label.config(text="No song playing")
 

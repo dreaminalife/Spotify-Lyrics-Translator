@@ -69,7 +69,8 @@ class LyricsManager:
             song_id: Spotify track ID
             
         Returns:
-            dict: Cache entry with 'lyrics', 'lyrics_source', and 'translation_source' keys,
+            dict: Cache entry with 'lyrics', 'lyrics_source', 'translation_source', 
+                  'original_title', and 'translated_title' keys,
                   or None if not in cache. For backward compatibility, old format (list) is
                   converted to new format with 'Unknown' sources.
         """
@@ -85,9 +86,11 @@ class LyricsManager:
                 return {
                     'lyrics': cached,
                     'lyrics_source': 'Unknown',
-                    'translation_source': 'Unknown'
+                    'translation_source': 'Unknown',
+                    'original_title': None,
+                    'translated_title': None
                 }
-            # New format: dict with lyrics, lyrics_source, translation_source
+            # New format: dict with lyrics, lyrics_source, translation_source, and title info
             elif isinstance(cached, dict):
                 lyrics = cached.get('lyrics', [])
                 try:
@@ -97,11 +100,78 @@ class LyricsManager:
                 return {
                     'lyrics': lyrics,
                     'lyrics_source': cached.get('lyrics_source', 'Unknown'),
-                    'translation_source': cached.get('translation_source', 'Unknown')
+                    'translation_source': cached.get('translation_source', 'Unknown'),
+                    'original_title': cached.get('original_title'),
+                    'translated_title': cached.get('translated_title')
                 }
         return None
     
-    def translate_lyrics(self, lyrics_data, song_id, lyrics_source: str = "Unknown", callback=None):
+    def translate_song_title(self, song_title: str, song_id: str) -> str:
+        """Translate a song title using the current translation client.
+        
+        Args:
+            song_title: Original song title
+            song_id: Spotify track ID for caching
+            
+        Returns:
+            str: Translated song title or original title if translation fails
+        """
+        if not song_title or not song_title.strip():
+            return song_title
+            
+        try:
+            # Use the translation client to translate the title
+            translated_titles = self.translation_client.translate_lines(
+                [song_title],
+                source_lang=None,
+                target_lang=self.target_language,
+            )
+            if translated_titles and len(translated_titles) > 0:
+                return translated_titles[0]
+        except Exception as e:
+            print(f"Error translating song title: {e}")
+            
+        # Return original title if translation fails
+        return song_title
+    
+    def update_cache_with_title(self, song_id: str, original_title: str, translated_title: str):
+        """Update the cache entry for a song with translated title information.
+        
+        Args:
+            song_id: Spotify track ID
+            original_title: Original song title
+            translated_title: Translated song title
+        """
+        if song_id in self.cache:
+            self.cache[song_id]['original_title'] = original_title
+            self.cache[song_id]['translated_title'] = translated_title
+            self.save_cache()
+        else:
+            # Create a new cache entry with just title info if lyrics aren't cached yet
+            self.cache[song_id] = {
+                'original_title': original_title,
+                'translated_title': translated_title,
+                'lyrics': [],
+                'lyrics_source': 'Unknown',
+                'translation_source': 'Unknown'
+            }
+            self.save_cache()
+    
+    def get_cached_title(self, song_id: str) -> tuple:
+        """Get cached translated title for a song.
+        
+        Args:
+            song_id: Spotify track ID
+            
+        Returns:
+            tuple: (original_title, translated_title) or (None, None) if not in cache
+        """
+        cached = self.cache.get(song_id)
+        if cached and 'original_title' in cached and 'translated_title' in cached:
+            return cached.get('original_title'), cached.get('translated_title')
+        return None, None
+
+    def translate_lyrics(self, lyrics_data, song_id, lyrics_source: str = "Unknown", callback=None, song_title: str = None):
         """Translate lyrics using multithreading.
         
         Args:
@@ -109,6 +179,7 @@ class LyricsManager:
             song_id: Spotify track ID for caching
             lyrics_source: Source name of the lyrics provider (e.g., "Spotify", "LRCLib")
             callback: Optional callback function to call with results
+            song_title: Optional song title to translate
             
         Returns:
             list: Translated lyrics with original and translated text
@@ -135,6 +206,11 @@ class LyricsManager:
         except Exception as e:
             print(f"Error getting translation source name: {e}")
 
+        # Translate song title if provided
+        translated_title = None
+        if song_title:
+            translated_title = self.translate_song_title(song_title, song_id)
+
         # Merge into lyric dicts
         translated_lyrics = []
         for src, translated_text in zip(ordered, translated_lines):
@@ -146,12 +222,19 @@ class LyricsManager:
         
         # Already ordered
         
-        # Store in cache with source info
-        self.cache[song_id] = {
+        # Store in cache with source info and title info
+        cache_entry = {
             'lyrics': translated_lyrics,
             'lyrics_source': lyrics_source,
             'translation_source': translation_source
         }
+        
+        # Add title info if available
+        if song_title and translated_title:
+            cache_entry['original_title'] = song_title
+            cache_entry['translated_title'] = translated_title
+        
+        self.cache[song_id] = cache_entry
         
         # Ensure cache size doesn't exceed limit
         if len(self.cache) > self.max_cache_size:
