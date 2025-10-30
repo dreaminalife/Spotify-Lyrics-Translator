@@ -280,18 +280,18 @@ def update_display():
                 
                 # Get translated title for floating window
                 original_title, translated_title = lyrics_manager.get_cached_title(song_id)
-                floating_window.update_lyrics(current_song_name, current_line, current_position, song_duration, translated_title)
+                floating_window.update_lyrics(current_song_name, artist_name, current_line, current_position, song_duration, translated_title)
             elif not is_playing and lyrics_synced:
                 # When paused, keep displaying the last current line
                 song_duration = current_song['item']['duration_ms'] if current_song and 'item' in current_song else 0
                 
                 # Get translated title for floating window
                 original_title, translated_title = lyrics_manager.get_cached_title(song_id)
-                floating_window.update_lyrics(current_song_name, last_current_line, current_position, song_duration, translated_title)
+                floating_window.update_lyrics(current_song_name, artist_name, last_current_line, current_position, song_duration, translated_title)
             else:
                 # Unsynced or no song: clear text and avoid progression
                 last_current_line = None
-                floating_window.update_lyrics(current_song_name, None, 0, 0)
+                floating_window.update_lyrics(current_song_name, artist_name, None, 0, 0)
         
     else:
         # No song playing or not authenticated yet

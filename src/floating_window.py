@@ -47,16 +47,31 @@ class FloatingLyricsWindow:
         gradient_frame = tk.Frame(main_frame, bg=SPOTIFY_BLACK, height=2)
         gradient_frame.pack(fill=tk.X, pady=(0, 15))
         
+        # Song title and artist container
+        title_frame = tk.Frame(main_frame, bg=SPOTIFY_DARK)
+        title_frame.pack(fill=tk.X, pady=(0, 8))
+
         # Song title with modern typography
         self.song_label = tk.Label(
-            main_frame,
+            title_frame,
             text="No song playing",
             font=('Noto Serif SC SemiBold', 12, 'normal'),
             bg=SPOTIFY_DARK,
             fg=SPOTIFY_GREEN,
             anchor='w'
         )
-        self.song_label.pack(fill=tk.X, pady=(0, 12))
+        self.song_label.pack(side=tk.LEFT)
+
+        # Artist name with subtle styling (right-aligned)
+        self.artist_label = tk.Label(
+            title_frame,
+            text="",
+            font=('Noto Serif SC SemiBold', 10, 'normal'),
+            bg=SPOTIFY_DARK,
+            fg=SPOTIFY_LIGHT_GRAY,
+            anchor='e'
+        )
+        self.artist_label.pack(side=tk.RIGHT)
         
         # Original lyrics with larger, bolder font
         self.original_label = tk.Label(
@@ -132,11 +147,12 @@ class FloatingLyricsWindow:
         y = self.window.winfo_y() + deltay
         self.window.geometry(f"+{x}+{y}")
     
-    def update_lyrics(self, song_name, current_line, position_ms=0, duration_ms=0, translated_title=None):
+    def update_lyrics(self, song_name, artist_name=None, current_line=None, position_ms=0, duration_ms=0, translated_title=None):
         """Update the displayed lyrics and progress bar.
 
         Args:
             song_name: Name of the current song
+            artist_name: Name of the artist (optional)
             current_line: Dictionary with 'words' and 'translated' keys, or None
             position_ms: Current playback position in milliseconds
             duration_ms: Total song duration in milliseconds
@@ -150,8 +166,15 @@ class FloatingLyricsWindow:
                 self.song_label.config(text=display_title)
             else:
                 self.song_label.config(text=song_name)
+
+            # Display artist name if available
+            if artist_name:
+                self.artist_label.config(text=f"By {artist_name}")
+            else:
+                self.artist_label.config(text="")
         else:
             self.song_label.config(text="No song playing")
+            self.artist_label.config(text="")
 
         if current_line:
             original_text = current_line.get('words', '')
