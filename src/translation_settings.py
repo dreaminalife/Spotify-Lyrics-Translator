@@ -40,6 +40,13 @@ def default_translation_settings() -> Dict[str, Any]:
         "selected_model": "openrouter/auto",
         "target_language": "en",
         "global_prompt": DEFAULT_PROMPT,
+        "selected_font": "Microsoft YaHei UI",  # Default Chinese font (will be updated after tkinter init)
+        "font_size": 12,  # Default font size
+        "font_bold": True,  # Default to bold fonts
+        # Floating window font settings
+        "floating_font": "Microsoft YaHei UI",  # Default floating window font
+        "floating_font_size": 12,  # Default floating window font size
+        "floating_font_bold": True,  # Default floating window bold setting
     }
 
 
@@ -48,7 +55,12 @@ def read_translation_settings() -> Dict[str, Any]:
     if not path.exists():
         return default_translation_settings()
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        settings = json.loads(path.read_text(encoding="utf-8"))
+        # Ensure selected_font is set if not present (for backward compatibility)
+        # This will be updated later when tkinter is ready
+        if "selected_font" not in settings:
+            settings["selected_font"] = "Microsoft YaHei UI"  # Safe fallback
+        return settings
     except Exception:
         return default_translation_settings()
 

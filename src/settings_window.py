@@ -12,6 +12,12 @@ from .translation_settings import (
     DEFAULT_MODEL_PARAMS,
 )
 from .translation_clients import fetch_openrouter_models, format_model_display
+from .font_manager import get_available_fonts, get_default_chinese_font
+
+def get_selected_font():
+    """Get the currently selected font from settings."""
+    settings = read_translation_settings()
+    return settings.get("selected_font", get_default_chinese_font())
 
 
 class SettingsWindow(tk.Toplevel):
@@ -69,7 +75,7 @@ class SettingsWindow(tk.Toplevel):
             ("redirect_uri", "Redirect URI"),
             ("sp_dc_cookie", "sp_dc Cookie"),
         ]:
-            lbl = tk.Label(tab_spotify, text=label, bg=self.theme["panel"], fg=self.theme["label_fg"], font=('Noto Serif SC SemiBold', 10, 'normal')) 
+            lbl = tk.Label(tab_spotify, text=label, bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 10, 'normal')) 
             lbl.grid(row=row, column=0, sticky="w", pady=(0, 6))
 
             show = "*" if key == "client_secret" else None
@@ -85,25 +91,25 @@ class SettingsWindow(tk.Toplevel):
 
         # Provider selection
         provider_var = tk.StringVar(value=tsettings.get("provider", "Google Translate"))
-        tk.Label(tab_translation, text="Provider", bg=self.theme["panel"], fg=self.theme["label_fg"], font=('Noto Serif SC SemiBold', 10, 'normal')).grid(row=0, column=0, sticky="w")
+        tk.Label(tab_translation, text="Provider", bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 10, 'normal')).grid(row=0, column=0, sticky="w")
         provider_combo = ttk.Combobox(tab_translation, textvariable=provider_var, values=["Google Translate", "OpenRouter"], state="readonly")
         provider_combo.grid(row=0, column=1, sticky="ew", pady=(0, 6))
 
         # Target language
         target_lang_var = tk.StringVar(value=tsettings.get("target_language", "en"))
-        tk.Label(tab_translation, text="Target Language (e.g., en)", bg=self.theme["panel"], fg=self.theme["label_fg"], font=('Noto Serif SC SemiBold', 10, 'normal')).grid(row=1, column=0, sticky="w")
+        tk.Label(tab_translation, text="Target Language (e.g., en)", bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 10, 'normal')).grid(row=1, column=0, sticky="w")
         target_lang_entry = tk.Entry(tab_translation, textvariable=target_lang_var, bg=self.theme["entry_bg"], fg=self.theme["entry_fg"], insertbackground=self.theme["entry_fg"], relief=tk.FLAT)
         target_lang_entry.grid(row=1, column=1, sticky="ew", pady=(0, 6))
 
         # OpenRouter API key
         openrouter_key_var = tk.StringVar(value=current.get("openrouter_api_key", ""))
-        tk.Label(tab_translation, text="OpenRouter API Key", bg=self.theme["panel"], fg=self.theme["label_fg"], font=('Noto Serif SC SemiBold', 10, 'normal')).grid(row=2, column=0, sticky="w")
+        tk.Label(tab_translation, text="OpenRouter API Key", bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 10, 'normal')).grid(row=2, column=0, sticky="w")
         openrouter_key_entry = tk.Entry(tab_translation, textvariable=openrouter_key_var, show="*", bg=self.theme["entry_bg"], fg=self.theme["entry_fg"], insertbackground=self.theme["entry_fg"], relief=tk.FLAT)
         openrouter_key_entry.grid(row=2, column=1, sticky="ew", pady=(0, 6))
 
         # Model dropdown (dynamic via OpenRouter API)
         model_display_var = tk.StringVar(value=tsettings.get("selected_model", "openrouter/auto"))
-        tk.Label(tab_translation, text="OpenRouter Model", bg=self.theme["panel"], fg=self.theme["label_fg"], font=('Noto Serif SC SemiBold', 10, 'normal')).grid(row=3, column=0, sticky="w")
+        tk.Label(tab_translation, text="OpenRouter Model", bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 10, 'normal')).grid(row=3, column=0, sticky="w")
         model_combo = ttk.Combobox(tab_translation, textvariable=model_display_var, values=[model_display_var.get()], state="normal")
         model_combo.grid(row=3, column=1, sticky="ew", pady=(0, 6))
         # Refresh models button
@@ -116,12 +122,12 @@ class SettingsWindow(tk.Toplevel):
             padx=10,
             pady=6,
             cursor="hand2",
-            font=('Noto Serif SC SemiBold', 10, 'normal'),
+            font=(get_selected_font(), 10, 'normal'),
         )
         refresh_models_btn.grid(row=3, column=2, sticky="w")
 
         # JSON body editor for selected model
-        tk.Label(tab_translation, text="Model JSON Body", bg=self.theme["panel"], fg=self.theme["label_fg"], font=('Noto Serif SC SemiBold', 10, 'normal')).grid(row=4, column=0, sticky="nw")
+        tk.Label(tab_translation, text="Model JSON Body", bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 10, 'normal')).grid(row=4, column=0, sticky="nw")
         body_text = tk.Text(tab_translation, height=10, bg=self.theme["entry_bg"], fg=self.theme["entry_fg"], insertbackground=self.theme["entry_fg"], relief=tk.FLAT)
         body_text.grid(row=4, column=1, sticky="nsew", pady=(0, 6))
 
@@ -416,7 +422,7 @@ class SettingsWindow(tk.Toplevel):
             _populate_models_async(show_messages=False)
 
         # Global prompt editor
-        tk.Label(tab_translation, text="Global Prompt", bg=self.theme["panel"], fg=self.theme["label_fg"], font=('Noto Serif SC SemiBold', 10, 'normal')).grid(row=5, column=0, sticky="nw")
+        tk.Label(tab_translation, text="Global Prompt", bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 10, 'normal')).grid(row=5, column=0, sticky="nw")
         prompt_text = tk.Text(tab_translation, height=8, bg=self.theme["entry_bg"], fg=self.theme["entry_fg"], insertbackground=self.theme["entry_fg"], relief=tk.FLAT)
         prompt_text.grid(row=5, column=1, sticky="nsew")
         prompt_text.insert("1.0", tsettings.get("global_prompt", DEFAULT_PROMPT))
@@ -444,6 +450,12 @@ class SettingsWindow(tk.Toplevel):
                 "selected_model": selected_model_id,
                 "target_language": target_lang_var.get().strip() or "en",
                 "global_prompt": prompt_text.get("1.0", tk.END).strip() or DEFAULT_PROMPT,
+                "selected_font": font_var.get(),
+                "font_size": font_size_var.get(),
+                "font_bold": font_bold_var.get(),
+                "floating_font": floating_font_var.get(),
+                "floating_font_size": floating_font_size_var.get(),
+                "floating_font_bold": floating_font_bold_var.get(),
             })
 
             # Save model body
@@ -472,15 +484,193 @@ class SettingsWindow(tk.Toplevel):
         tab_translation.grid_rowconfigure(4, weight=1)
         tab_translation.grid_rowconfigure(5, weight=1)
 
+        # Font Selection Tab
+        tab_font = tk.Frame(notebook, bg=self.theme["panel"], padx=20, pady=20)
+        notebook.add(tab_font, text="Font")
+
+        # Main Window Fonts header
+        main_font_label = tk.Label(tab_font, text="Main Window Fonts", bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 12, 'bold'))
+        main_font_label.grid(row=0, column=0, columnspan=2, sticky='w', pady=(0, 5))
+
+        # Font selection dropdown
+        font_var = tk.StringVar(value=tsettings.get("selected_font", get_default_chinese_font()))
+        tk.Label(tab_font, text="Font", bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 10, 'normal')).grid(row=1, column=0, sticky="w")
+
+        # Get available fonts (Chinese and English)
+        available_fonts = get_available_fonts()
+        font_combo = ttk.Combobox(tab_font, textvariable=font_var, values=available_fonts, state="readonly")
+        font_combo.grid(row=1, column=1, sticky="ew", pady=(0, 6))
+
+        # Font size slider
+        font_size_var = tk.IntVar(value=tsettings.get("font_size", 12))
+        tk.Label(tab_font, text="Font Size", bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 10, 'normal')).grid(row=2, column=0, sticky="w")
+
+        size_frame = tk.Frame(tab_font, bg=self.theme["panel"])
+        size_frame.grid(row=2, column=1, sticky="ew", pady=(0, 6))
+
+        size_scale = tk.Scale(
+            size_frame,
+            from_=8,
+            to=24,
+            orient=tk.HORIZONTAL,
+            variable=font_size_var,
+            bg=self.theme["panel"],
+            fg=self.theme["label_fg"],
+            troughcolor=self.theme["entry_bg"],
+            highlightbackground=self.theme["panel"]
+        )
+        size_scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        size_value_label = tk.Label(
+            size_frame,
+            textvariable=font_size_var,
+            bg=self.theme["panel"],
+            fg=self.theme["label_fg"],
+            font=(get_selected_font(), 10, 'normal'),
+            width=3
+        )
+        size_value_label.pack(side=tk.RIGHT, padx=(10, 0))
+
+        # Font bold toggle
+        font_bold_var = tk.BooleanVar(value=tsettings.get("font_bold", True))
+        tk.Label(tab_font, text="Bold Text", bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 10, 'normal')).grid(row=3, column=0, sticky="w")
+
+        bold_check = tk.Checkbutton(
+            tab_font,
+            variable=font_bold_var,
+            bg=self.theme["panel"],
+            activebackground=self.theme["panel"],
+            selectcolor=self.theme["panel"]
+        )
+        bold_check.grid(row=3, column=1, sticky="w", pady=(0, 6))
+
+        # Font preview
+        preview_frame = tk.Frame(tab_font, bg=self.theme["panel"])
+        preview_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+
+        tk.Label(preview_frame, text="Font Preview:", bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 10, 'normal')).pack(anchor="w")
+
+        preview_text = tk.Label(
+            preview_frame,
+            text="When I was young, I listened to the radio, waiting for my favorite songs. Now I have Spotify, and I can hear any song I want anytime. Music brings back memories of the past.\n\n当我年轻的时候，我听着收音机，等着我最喜欢的歌曲。现在我有了Spotify，我可以随时听到任何我想听的歌。音乐能让我回忆起过去的时光。",
+            bg=self.theme["entry_bg"],
+            fg=self.theme["entry_fg"],
+            font=(font_var.get(), font_size_var.get(), 'bold' if font_bold_var.get() else 'normal'),
+            relief=tk.FLAT,
+            padx=10,
+            pady=10,
+            wraplength=700,
+            justify='left'
+        )
+        preview_text.pack(fill=tk.X, pady=(5, 0))
+
+        # Update preview when any setting changes
+        def update_preview(*_):
+            weight = 'bold' if font_bold_var.get() else 'normal'
+            preview_text.config(font=(font_var.get(), font_size_var.get(), weight))
+
+        font_var.trace_add("write", update_preview)
+        font_size_var.trace_add("write", update_preview)
+        font_bold_var.trace_add("write", update_preview)
+
+        # Separator
+        separator = ttk.Separator(tab_font, orient='horizontal')
+        separator.grid(row=5, column=0, columnspan=2, sticky='ew', pady=(20, 10))
+
+        # Floating Window Font Settings
+        floating_label = tk.Label(tab_font, text="Floating Window Fonts", bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 12, 'bold'))
+        floating_label.grid(row=6, column=0, columnspan=2, sticky='w', pady=(10, 5))
+
+        # Floating window font selection
+        floating_font_var = tk.StringVar(value=tsettings.get("floating_font", get_default_chinese_font()))
+        tk.Label(tab_font, text="Font", bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 10, 'normal')).grid(row=7, column=0, sticky="w")
+
+        floating_font_combo = ttk.Combobox(tab_font, textvariable=floating_font_var, values=available_fonts, state="readonly")
+        floating_font_combo.grid(row=7, column=1, sticky="ew", pady=(0, 6))
+
+        # Floating window font size slider
+        floating_font_size_var = tk.IntVar(value=tsettings.get("floating_font_size", 12))
+        tk.Label(tab_font, text="Font Size", bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 10, 'normal')).grid(row=8, column=0, sticky="w")
+
+        floating_size_frame = tk.Frame(tab_font, bg=self.theme["panel"])
+        floating_size_frame.grid(row=8, column=1, sticky="ew", pady=(0, 6))
+
+        floating_size_scale = tk.Scale(
+            floating_size_frame,
+            from_=8,
+            to=24,
+            orient=tk.HORIZONTAL,
+            variable=floating_font_size_var,
+            bg=self.theme["panel"],
+            fg=self.theme["label_fg"],
+            troughcolor=self.theme["entry_bg"],
+            highlightbackground=self.theme["panel"]
+        )
+        floating_size_scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        floating_size_value_label = tk.Label(
+            floating_size_frame,
+            textvariable=floating_font_size_var,
+            bg=self.theme["panel"],
+            fg=self.theme["label_fg"],
+            font=(get_selected_font(), 10, 'normal'),
+            width=3
+        )
+        floating_size_value_label.pack(side=tk.RIGHT, padx=(10, 0))
+
+        # Floating window font bold toggle
+        floating_font_bold_var = tk.BooleanVar(value=tsettings.get("floating_font_bold", True))
+        tk.Label(tab_font, text="Bold Text", bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 10, 'normal')).grid(row=9, column=0, sticky="w")
+
+        floating_bold_check = tk.Checkbutton(
+            tab_font,
+            variable=floating_font_bold_var,
+            bg=self.theme["panel"],
+            activebackground=self.theme["panel"],
+            selectcolor=self.theme["panel"]
+        )
+        floating_bold_check.grid(row=9, column=1, sticky="w", pady=(0, 6))
+
+        # Floating window font preview
+        floating_preview_frame = tk.Frame(tab_font, bg=self.theme["panel"])
+        floating_preview_frame.grid(row=10, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+
+        tk.Label(floating_preview_frame, text="Floating Window Preview:", bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 10, 'normal')).pack(anchor="w")
+
+        floating_preview_text = tk.Label(
+            floating_preview_frame,
+            text="Original: When I was young, I listened to the radio...\nTranslation: 当我年轻的时候，我听着收音机...",
+            bg=self.theme["entry_bg"],
+            fg=self.theme["entry_fg"],
+            font=(floating_font_var.get(), floating_font_size_var.get(), 'bold' if floating_font_bold_var.get() else 'normal'),
+            relief=tk.FLAT,
+            padx=10,
+            pady=10,
+            wraplength=600,
+            justify='left'
+        )
+        floating_preview_text.pack(fill=tk.X, pady=(5, 0))
+
+        # Update floating preview when any floating setting changes
+        def update_floating_preview(*_):
+            weight = 'bold' if floating_font_bold_var.get() else 'normal'
+            floating_preview_text.config(font=(floating_font_var.get(), floating_font_size_var.get(), weight))
+
+        floating_font_var.trace_add("write", update_floating_preview)
+        floating_font_size_var.trace_add("write", update_floating_preview)
+        floating_font_bold_var.trace_add("write", update_floating_preview)
+
+        tab_font.grid_columnconfigure(1, weight=1)
+
         # Footer buttons shared (Cancel/Save All)
         footer = tk.Frame(self, bg=self.theme["panel"]) 
         footer.pack(fill=tk.X, pady=(12, 12))
 
-        cancel_btn = tk.Button(footer, text="Cancel", command=self._on_cancel, bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief=tk.FLAT, padx=16, pady=8, cursor="hand2", font=('Noto Serif SC SemiBold', 10, 'normal'))
+        cancel_btn = tk.Button(footer, text="Cancel", command=self._on_cancel, bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief=tk.FLAT, padx=16, pady=8, cursor="hand2", font=(get_selected_font(), 10, 'normal'))
         cancel_btn.pack(side=tk.RIGHT, padx=(0, 8))
 
         # Save applies both tabs
-        save_btn = tk.Button(footer, text="Save", command=on_save_translation, bg=self.theme["accent"], fg=self.theme["button_fg"], activebackground=self.theme["accent_active"], relief=tk.FLAT, padx=16, pady=8, cursor="hand2", font=('Noto Serif SC SemiBold', 10, 'normal'))
+        save_btn = tk.Button(footer, text="Save", command=on_save_translation, bg=self.theme["accent"], fg=self.theme["button_fg"], activebackground=self.theme["accent_active"], relief=tk.FLAT, padx=16, pady=8, cursor="hand2", font=(get_selected_font(), 10, 'normal'))
         save_btn.pack(side=tk.RIGHT)
 
         self.bind("<Return>", lambda e: self._on_save())

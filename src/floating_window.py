@@ -1,20 +1,37 @@
 """Floating lyrics window implementation."""
 import tkinter as tk
 from tkinter import ttk
+from .translation_settings import read_translation_settings
+from .font_manager import get_default_chinese_font
 
 
 class FloatingLyricsWindow:
     """Always-on-top draggable window for displaying current lyrics."""
-    
-    def __init__(self, parent):
+
+    def __init__(self, parent, font_name=None, font_size=None, font_bold=None):
         """Initialize the floating lyrics window.
-        
+
         Args:
             parent: Parent Tkinter window
+            font_name: Font name to use (optional, will use settings if not provided)
+            font_size: Font size to use (optional, will use settings if not provided)
+            font_bold: Whether to use bold font (optional, will use settings if not provided)
         """
         self.window = tk.Toplevel(parent)
         self.window.title("Floating Lyrics")
         self.window.overrideredirect(True)  # Remove window decorations
+
+        # Set font settings - use provided values or get from settings
+        if font_name is not None and font_size is not None and font_bold is not None:
+            self.selected_font = font_name
+            self.font_size = font_size
+            self.font_bold = font_bold
+        else:
+            # Fallback to getting from settings (for backward compatibility)
+            self.selected_font = self.get_selected_font()
+            settings = read_translation_settings()
+            self.font_size = settings.get("floating_font_size", 12)
+            self.font_bold = settings.get("floating_font_bold", True)
         
         # Define Spotify-inspired color scheme
         SPOTIFY_BLACK = '#121212'
@@ -51,11 +68,17 @@ class FloatingLyricsWindow:
         title_frame = tk.Frame(main_frame, bg=SPOTIFY_DARK)
         title_frame.pack(fill=tk.X, pady=(0, 8))
 
+        # Calculate font styles based on settings
+        song_font_style = 'bold' if self.font_bold else 'normal'
+        artist_font_style = 'normal' if self.font_bold else 'normal'  # Artist stays normal
+        original_font_style = 'normal'  # Original lyrics stay normal for readability
+        translated_font_style = 'bold' if self.font_bold else 'normal'
+
         # Song title with modern typography
         self.song_label = tk.Label(
             title_frame,
             text="No song playing",
-            font=('Noto Serif SC SemiBold', 12, 'normal'),
+            font=(self.selected_font, self.font_size, 'bold'),  # Song title always bold
             bg=SPOTIFY_DARK,
             fg=SPOTIFY_GREEN,
             anchor='w'
@@ -66,18 +89,18 @@ class FloatingLyricsWindow:
         self.artist_label = tk.Label(
             title_frame,
             text="",
-            font=('Noto Serif SC SemiBold', 10, 'normal'),
+            font=(self.selected_font, max(8, self.font_size - 2), artist_font_style),
             bg=SPOTIFY_DARK,
             fg=SPOTIFY_LIGHT_GRAY,
             anchor='e'
         )
         self.artist_label.pack(side=tk.RIGHT)
-        
-        # Original lyrics with larger, bolder font
+
+        # Original lyrics with larger font
         self.original_label = tk.Label(
             main_frame,
             text="",
-            font=('Noto Serif SC SemiBold', 18, 'normal'),
+            font=(self.selected_font, self.font_size + 6, original_font_style),
             bg=SPOTIFY_DARK,
             fg=SPOTIFY_WHITE,
             anchor='w',
@@ -85,12 +108,12 @@ class FloatingLyricsWindow:
             justify='left'
         )
         self.original_label.pack(fill=tk.X, pady=(0, 8))
-        
-        # Translated lyrics with subtle styling
+
+        # Translated lyrics with styling
         self.translated_label = tk.Label(
             main_frame,
             text="",
-            font=('Noto Serif SC SemiBold', 14, 'bold'),
+            font=(self.selected_font, self.font_size + 2, translated_font_style),
             bg=SPOTIFY_DARK,
             fg=SPOTIFY_WHITE,
             anchor='w',
@@ -229,11 +252,12 @@ class FloatingLyricsWindow:
                 label.config(fg=self._adjust_color_alpha(label.cget("fg"), alpha))
                 label.after(0, lambda: fade_in(step + 1))
             else:
-                # Reset to full color
+                # Reset to full color and correct font
                 if label == self.original_label:
                     label.config(fg='#FFFFFF')
                 else:
-                    label.config(fg='#FFFFFF', font=('Noto Serif SC SemiBold', 14, 'bold'))
+                    translated_font_style = 'bold' if self.font_bold else 'normal'
+                    label.config(fg='#FFFFFF', font=(self.selected_font, self.font_size + 2, translated_font_style))
         
         fade_out()
     
@@ -317,4 +341,43 @@ class FloatingLyricsWindow:
             return self.window and self.window.winfo_exists()
         except:
             return False
+
+    def get_selected_font(self):
+        """Get the currently selected floating window font from settings."""
+        settings = read_translation_settings()
+        return settings.get("floating_font", get_default_chinese_font())
+    
+    def update_font(self, font_name):
+        """Update the font used by all labels in the floating window.
+
+        Args:
+            font_name: The new font name to use
+        """
+        # Legacy method for backward compatibility
+        self.update_font_settings(font_name, 12, True)
+
+    def update_font_settings(self, font_name, font_size, is_bold):
+        """Update the font settings used by all labels in the floating window.
+
+        Args:
+            font_name: The new font name to use
+            font_size: The base font size
+            is_bold: Whether to use bold text
+        """
+        # Update instance variables
+        self.selected_font = font_name
+        self.font_size = font_size
+        self.font_bold = is_bold
+
+        # Calculate font styles based on settings
+        song_font_style = 'bold'  # Song title always bold
+        artist_font_style = 'normal'  # Artist stays normal for subtlety
+        original_font_style = 'normal'  # Original lyrics stay normal for readability
+        translated_font_style = 'bold' if is_bold else 'normal'
+
+        # Apply font settings with appropriate scaling
+        self.song_label.config(font=(font_name, font_size, song_font_style))
+        self.artist_label.config(font=(font_name, max(8, font_size - 2), artist_font_style))
+        self.original_label.config(font=(font_name, font_size + 6, original_font_style))
+        self.translated_label.config(font=(font_name, font_size + 2, translated_font_style))
 

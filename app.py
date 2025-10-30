@@ -18,6 +18,7 @@ from src.translation_settings import (
     read_models_config,
 )
 from src.settings_window import SettingsWindow
+from src.font_manager import get_default_chinese_font
 
 # Configure logging to show INFO level and above
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
@@ -41,6 +42,73 @@ lyrics_synced = True
 last_current_line = None
 current_lyrics_source = "Unknown"
 current_translation_source = "Unknown"
+selected_font = "Microsoft YaHei UI"  # Default font (will be updated after tkinter init)
+
+def get_selected_font():
+    """Get the currently selected font from settings."""
+    global selected_font
+    settings = read_translation_settings()
+    font_from_settings = settings.get("selected_font", "Microsoft YaHei UI")
+
+    # Try to get the proper default font if tkinter is available
+    try:
+        # Check if tkinter root exists
+        import tkinter
+        if tkinter._default_root:
+            from src.font_manager import get_default_chinese_font
+            if not font_from_settings or font_from_settings == "Microsoft YaHei UI":
+                font_from_settings = get_default_chinese_font()
+    except:
+        # If tkinter is not ready, use the safe fallback
+        pass
+
+    selected_font = font_from_settings
+    return selected_font
+
+def get_font_settings():
+    """Get the current main window font settings (name, size, bold)."""
+    settings = read_translation_settings()
+    font_name = settings.get("selected_font", "Microsoft YaHei UI")
+    font_size = settings.get("font_size", 12)
+    font_bold = settings.get("font_bold", True)
+
+    # Try to get the proper default font if tkinter is available
+    try:
+        import tkinter
+        if tkinter._default_root:
+            from src.font_manager import get_default_chinese_font
+            if not font_name or font_name == "Microsoft YaHei UI":
+                font_name = get_default_chinese_font()
+    except:
+        pass
+
+    return font_name, font_size, font_bold
+
+def get_floating_font_settings():
+    """Get the current floating window font settings (name, size, bold)."""
+    settings = read_translation_settings()
+    font_name = settings.get("floating_font", "Microsoft YaHei UI")
+    font_size = settings.get("floating_font_size", 12)
+    font_bold = settings.get("floating_font_bold", True)
+
+    # Try to get the proper default font if tkinter is available
+    try:
+        import tkinter
+        if tkinter._default_root:
+            from src.font_manager import get_default_chinese_font
+            if not font_name or font_name == "Microsoft YaHei UI":
+                font_name = get_default_chinese_font()
+    except:
+        pass
+
+    return font_name, font_size, font_bold
+
+def apply_font_to_widget(widget, font_size=None, font_style=None):
+    """Apply the selected font to a widget."""
+    font_name, default_size, is_bold = get_font_settings()
+    size = font_size if font_size is not None else default_size
+    style = font_style if font_style is not None else ('bold' if is_bold else 'normal')
+    widget.config(font=(font_name, size, style))
 
 
 def init_spotify_client(settings):
@@ -79,6 +147,9 @@ def init_translation_client():
     settings = read_translation_settings()
     models_body = read_models_config()
     secrets = read_secrets()
+
+    # Update the selected font
+    get_selected_font()
 
     provider = settings.get("provider", "Google Translate")
     target_language = settings.get("target_language", "en")
@@ -139,6 +210,12 @@ def open_settings_modal(prefill=None):
     def on_saved(values):
         init_spotify_client(values)
         init_translation_client()
+        # Refresh UI with new font
+        refresh_ui_font()
+        # Update floating window fonts if it exists
+        if floating_window and floating_window.is_open():
+            font_name, font_size, is_bold = get_floating_font_settings()
+            floating_window.update_font_settings(font_name, font_size, is_bold)
         # Force refresh lyrics after auth
         global current_song_id
         current_song_id = None
@@ -647,14 +724,53 @@ def adjust_column_widths():
 # Function to toggle floating window
 def toggle_floating_window():
     global floating_window
-    
+
     if floating_window and floating_window.is_open():
         floating_window.close()
         floating_window = None
         toggle_button.config(text="Show Floating Lyrics")
     else:
-        floating_window = FloatingLyricsWindow(root)
+        # Get floating window font settings
+        font_name, font_size, is_bold = get_floating_font_settings()
+        floating_window = FloatingLyricsWindow(root, font_name, font_size, is_bold)
         toggle_button.config(text="Hide Floating Lyrics")
+
+def refresh_ui_font():
+    """Refresh all main window UI elements with the currently selected font settings."""
+    font_name, font_size, is_bold = get_font_settings()
+    font_style = 'bold' if is_bold else 'normal'
+
+    # Update all UI elements with the new font settings
+    unsynced_banner_label.config(font=(font_name, 11, font_style))
+    icon_label.config(font=(font_name, 24, 'bold'))  # Icon stays bold
+    app_title.config(font=(font_name, 20, 'bold'))  # Title stays bold
+    current_song_label.config(font=(font_name, 14, font_style))
+    current_time_label.config(font=(font_name, 12, font_style))
+    toggle_button.config(font=(font_name, 12, font_style))
+    refresh_button.config(font=(font_name, 12, font_style))
+    status_label.config(font=(font_name, 11, font_style))
+
+    # Update Treeview styles
+    style.configure(
+        "Spotify.Treeview",
+        background=SPOTIFY_DARK,
+        foreground=SPOTIFY_WHITE,
+        fieldbackground=SPOTIFY_DARK,
+        borderwidth=0,
+        font=(font_name, font_size, font_style),
+        rowheight=max(35, font_size + 20)  # Adjust row height based on font size
+    )
+
+    style.configure(
+        "Spotify.Treeview.Heading",
+        background=SPOTIFY_GRAY,
+        foreground=SPOTIFY_WHITE,
+        font=(font_name, font_size, font_style),
+        borderwidth=0,
+        relief=tk.FLAT
+    )
+
+    # Note: Floating window fonts are handled separately and not updated here
 
 # Create main application window
 root = tk.Tk()
@@ -697,10 +813,10 @@ unsynced_banner_frame = tk.Frame(root, bg=SPOTIFY_DARK, height=30)
 unsynced_banner_label = tk.Label(
     unsynced_banner_frame,
     text="Lyrics are not time-synced.",
-    font=('Noto Serif SC SemiBold', 11, 'bold'),
     fg=SPOTIFY_LIGHT_GRAY,
     bg=SPOTIFY_DARK
 )
+apply_font_to_widget(unsynced_banner_label, font_size=11)
 unsynced_banner_label.pack(side=tk.LEFT, padx=20, pady=6)
 unsynced_banner_frame._packed = False
 
@@ -717,7 +833,7 @@ title_frame.pack(side=tk.LEFT, padx=20, pady=15)
 icon_label = tk.Label(
     title_frame,
     text="♪",
-    font=('Noto Serif SC SemiBold', 24, 'bold'),
+    font=(get_selected_font(), 24, 'bold'),
     fg=SPOTIFY_GREEN,
     bg=SPOTIFY_DARK
 )
@@ -726,7 +842,7 @@ icon_label.pack(side=tk.LEFT, padx=(0, 10))
 app_title = tk.Label(
     title_frame,
     text="Lyrics Translator",
-    font=('Noto Serif SC SemiBold', 20, 'bold'),
+    font=(get_selected_font(), 20, 'bold'),
     fg=SPOTIFY_WHITE,
     bg=SPOTIFY_DARK
 )
@@ -741,7 +857,7 @@ current_song_var = tk.StringVar(value="No song playing")
 current_song_label = tk.Entry(
     song_info_frame,
     textvariable=current_song_var,
-    font=('Noto Serif SC SemiBold', 14, 'bold'),
+    font=(get_selected_font(), 14, 'bold'),
     fg=SPOTIFY_LIGHT_GRAY,
     bg=SPOTIFY_DARK,
     readonlybackground=SPOTIFY_DARK,
@@ -757,7 +873,7 @@ current_song_label.pack()
 current_time_label = tk.Label(
     song_info_frame,
     text="0:00",
-    font=('Noto Serif SC SemiBold', 12, 'bold'),
+    font=(get_selected_font(), 12, 'bold'),
     fg=SPOTIFY_GREEN,
     bg=SPOTIFY_DARK
 )
@@ -771,7 +887,7 @@ control_frame.pack(fill=tk.X, padx=20, pady=10)
 toggle_button = tk.Button(
     control_frame,
     text="Show Floating Lyrics",
-    font=('Noto Serif SC SemiBold', 12, 'bold'),
+    font=(get_selected_font(), 12, 'bold'),
     fg=SPOTIFY_WHITE,
     bg=SPOTIFY_GREEN,
     activebackground=SPOTIFY_GREEN_ACTIVE,
@@ -818,7 +934,7 @@ def refresh_lyrics():
 refresh_button = tk.Button(
     control_frame,
     text="Refresh Lyrics",
-    font=('Noto Serif SC SemiBold', 12, 'bold'),
+    font=(get_selected_font(), 12, 'bold'),
     fg=SPOTIFY_WHITE,
     bg=SPOTIFY_GRAY,
     activebackground=SPOTIFY_LIGHT_GRAY,
@@ -846,7 +962,7 @@ refresh_button.bind("<Leave>", on_refresh_leave)
 status_label = tk.Label(
     control_frame,
     text="Ready",
-    font=('Noto Serif SC SemiBold', 11, 'bold'),
+    font=(get_selected_font(), 11, 'bold'),
     fg=SPOTIFY_LIGHT_GRAY,
     bg=SPOTIFY_BLACK
 )
@@ -872,7 +988,7 @@ style.configure(
     foreground=SPOTIFY_WHITE,
     fieldbackground=SPOTIFY_DARK,
     borderwidth=0,
-    font=('Noto Serif SC SemiBold', 12, 'bold'),
+    font=(get_selected_font(), 12, 'bold'),
     rowheight=35
 )
 
@@ -881,7 +997,7 @@ style.configure(
     "Spotify.Treeview.Heading",
     background=SPOTIFY_GRAY,
     foreground=SPOTIFY_WHITE,
-    font=('Noto Serif SC SemiBold', 12, 'bold'),
+    font=(get_selected_font(), 12, 'bold'),
     borderwidth=0,
     relief=tk.FLAT
 )
@@ -965,6 +1081,33 @@ tree.bind("<Control-Insert>", _copy_tree_selection)
 # Initialize settings and client
 ensure_settings_and_init()
 init_translation_client()
+
+# Update font after tkinter is initialized
+selected_font = get_selected_font()
+refresh_ui_font()
+
+# Ensure we have the proper default font now that tkinter is ready
+def initialize_font_settings():
+    """Initialize font settings after tkinter is ready."""
+    try:
+        from src.font_manager import get_default_chinese_font
+        settings = read_translation_settings()
+        current_font = settings.get("selected_font", "Microsoft YaHei UI")
+
+        # If we have the fallback font, update to the proper default
+        if current_font == "Microsoft YaHei UI":
+            proper_default = get_default_chinese_font()
+            if proper_default != current_font:
+                settings["selected_font"] = proper_default
+                from src.translation_settings import save_translation_settings
+                save_translation_settings(settings)
+                global selected_font
+                selected_font = proper_default
+                refresh_ui_font()
+    except Exception as e:
+        print(f"Warning: Could not initialize font settings: {e}")
+
+initialize_font_settings()
 
 # Start the update loop
 root.after(500, update_display)
