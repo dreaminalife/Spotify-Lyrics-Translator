@@ -51,7 +51,7 @@ class FloatingLyricsWindow:
         self.song_label = tk.Label(
             main_frame,
             text="No song playing",
-            font=('Circular Std', 12, 'normal'),
+            font=('Noto Serif SC SemiBold', 12, 'normal'),
             bg=SPOTIFY_DARK,
             fg=SPOTIFY_GREEN,
             anchor='w'
@@ -62,7 +62,7 @@ class FloatingLyricsWindow:
         self.original_label = tk.Label(
             main_frame,
             text="",
-            font=('Circular Std', 18, 'bold'),
+            font=('Noto Serif SC SemiBold', 18, 'normal'),
             bg=SPOTIFY_DARK,
             fg=SPOTIFY_WHITE,
             anchor='w',
@@ -75,9 +75,9 @@ class FloatingLyricsWindow:
         self.translated_label = tk.Label(
             main_frame,
             text="",
-            font=('Circular Std', 14, 'normal'),
+            font=('Noto Serif SC SemiBold', 14, 'bold'),
             bg=SPOTIFY_DARK,
-            fg=SPOTIFY_LIGHT_GRAY,
+            fg=SPOTIFY_WHITE,
             anchor='w',
             wraplength=750,
             justify='left'
@@ -210,7 +210,7 @@ class FloatingLyricsWindow:
                 if label == self.original_label:
                     label.config(fg='#FFFFFF')
                 else:
-                    label.config(fg='#B3B3B3')
+                    label.config(fg='#FFFFFF', font=('Noto Serif SC SemiBold', 14, 'bold'))
         
         fade_out()
     

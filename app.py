@@ -552,7 +552,7 @@ def update_translations():
     if current_lyrics and len(current_lyrics) > 0:
         first_few = current_lyrics[:3]
         for i, lyric in enumerate(first_few):
-            translated = lyric.get('translated', '')[:50]
+            translated = (lyric.get('translated') or '')[:50]
 
     adjust_column_widths()
 
@@ -697,7 +697,7 @@ unsynced_banner_frame = tk.Frame(root, bg=SPOTIFY_DARK, height=30)
 unsynced_banner_label = tk.Label(
     unsynced_banner_frame,
     text="Lyrics are not time-synced.",
-    font=('Circular Std', 11, 'bold'),
+    font=('Noto Serif SC SemiBold', 11, 'bold'),
     fg=SPOTIFY_LIGHT_GRAY,
     bg=SPOTIFY_DARK
 )
@@ -715,9 +715,9 @@ title_frame.pack(side=tk.LEFT, padx=20, pady=15)
 
 # Spotify-like icon (using text representation)
 icon_label = tk.Label(
-    title_frame, 
-    text="♪", 
-    font=('Circular Std', 24, 'bold'),
+    title_frame,
+    text="♪",
+    font=('Noto Serif SC SemiBold', 24, 'bold'),
     fg=SPOTIFY_GREEN,
     bg=SPOTIFY_DARK
 )
@@ -726,7 +726,7 @@ icon_label.pack(side=tk.LEFT, padx=(0, 10))
 app_title = tk.Label(
     title_frame,
     text="Lyrics Translator",
-    font=('Circular Std', 20, 'bold'),
+    font=('Noto Serif SC SemiBold', 20, 'bold'),
     fg=SPOTIFY_WHITE,
     bg=SPOTIFY_DARK
 )
@@ -741,7 +741,7 @@ current_song_var = tk.StringVar(value="No song playing")
 current_song_label = tk.Entry(
     song_info_frame,
     textvariable=current_song_var,
-    font=('Circular Std', 14),
+    font=('Noto Serif SC SemiBold', 14, 'bold'),
     fg=SPOTIFY_LIGHT_GRAY,
     bg=SPOTIFY_DARK,
     readonlybackground=SPOTIFY_DARK,
@@ -757,7 +757,7 @@ current_song_label.pack()
 current_time_label = tk.Label(
     song_info_frame,
     text="0:00",
-    font=('Circular Std', 12),
+    font=('Noto Serif SC SemiBold', 12, 'bold'),
     fg=SPOTIFY_GREEN,
     bg=SPOTIFY_DARK
 )
@@ -771,7 +771,7 @@ control_frame.pack(fill=tk.X, padx=20, pady=10)
 toggle_button = tk.Button(
     control_frame,
     text="Show Floating Lyrics",
-    font=('Circular Std', 12, 'bold'),
+    font=('Noto Serif SC SemiBold', 12, 'bold'),
     fg=SPOTIFY_WHITE,
     bg=SPOTIFY_GREEN,
     activebackground=SPOTIFY_GREEN_ACTIVE,
@@ -818,7 +818,7 @@ def refresh_lyrics():
 refresh_button = tk.Button(
     control_frame,
     text="Refresh Lyrics",
-    font=('Circular Std', 12, 'bold'),
+    font=('Noto Serif SC SemiBold', 12, 'bold'),
     fg=SPOTIFY_WHITE,
     bg=SPOTIFY_GRAY,
     activebackground=SPOTIFY_LIGHT_GRAY,
@@ -846,7 +846,7 @@ refresh_button.bind("<Leave>", on_refresh_leave)
 status_label = tk.Label(
     control_frame,
     text="Ready",
-    font=('Circular Std', 11),
+    font=('Noto Serif SC SemiBold', 11, 'bold'),
     fg=SPOTIFY_LIGHT_GRAY,
     bg=SPOTIFY_BLACK
 )
@@ -872,7 +872,7 @@ style.configure(
     foreground=SPOTIFY_WHITE,
     fieldbackground=SPOTIFY_DARK,
     borderwidth=0,
-    font=('Circular Std', 11),
+    font=('Noto Serif SC SemiBold', 12, 'bold'),
     rowheight=35
 )
 
@@ -881,7 +881,7 @@ style.configure(
     "Spotify.Treeview.Heading",
     background=SPOTIFY_GRAY,
     foreground=SPOTIFY_WHITE,
-    font=('Circular Std', 12, 'bold'),
+    font=('Noto Serif SC SemiBold', 12, 'bold'),
     borderwidth=0,
     relief=tk.FLAT
 )
@@ -912,7 +912,7 @@ tree.tag_configure('evenrow', background=SPOTIFY_GRAY)
 tree.tag_configure('current', background=SPOTIFY_GREEN, foreground=SPOTIFY_WHITE)
 
 # Add a tag for translated text to make it stand out
-tree.tag_configure('translated', foreground=SPOTIFY_LIGHT_GRAY)
+tree.tag_configure('translated', foreground=SPOTIFY_WHITE)
 
 # Add a tag for highlighting newly translated lines
 tree.tag_configure('highlight', background=SPOTIFY_GREEN, foreground=SPOTIFY_WHITE)

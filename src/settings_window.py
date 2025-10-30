@@ -69,7 +69,7 @@ class SettingsWindow(tk.Toplevel):
             ("redirect_uri", "Redirect URI"),
             ("sp_dc_cookie", "sp_dc Cookie"),
         ]:
-            lbl = tk.Label(tab_spotify, text=label, bg=self.theme["panel"], fg=self.theme["label_fg"]) 
+            lbl = tk.Label(tab_spotify, text=label, bg=self.theme["panel"], fg=self.theme["label_fg"], font=('Noto Serif SC SemiBold', 10, 'normal')) 
             lbl.grid(row=row, column=0, sticky="w", pady=(0, 6))
 
             show = "*" if key == "client_secret" else None
@@ -85,25 +85,25 @@ class SettingsWindow(tk.Toplevel):
 
         # Provider selection
         provider_var = tk.StringVar(value=tsettings.get("provider", "Google Translate"))
-        tk.Label(tab_translation, text="Provider", bg=self.theme["panel"], fg=self.theme["label_fg"]).grid(row=0, column=0, sticky="w")
+        tk.Label(tab_translation, text="Provider", bg=self.theme["panel"], fg=self.theme["label_fg"], font=('Noto Serif SC SemiBold', 10, 'normal')).grid(row=0, column=0, sticky="w")
         provider_combo = ttk.Combobox(tab_translation, textvariable=provider_var, values=["Google Translate", "OpenRouter"], state="readonly")
         provider_combo.grid(row=0, column=1, sticky="ew", pady=(0, 6))
 
         # Target language
         target_lang_var = tk.StringVar(value=tsettings.get("target_language", "en"))
-        tk.Label(tab_translation, text="Target Language (e.g., en)", bg=self.theme["panel"], fg=self.theme["label_fg"]).grid(row=1, column=0, sticky="w")
+        tk.Label(tab_translation, text="Target Language (e.g., en)", bg=self.theme["panel"], fg=self.theme["label_fg"], font=('Noto Serif SC SemiBold', 10, 'normal')).grid(row=1, column=0, sticky="w")
         target_lang_entry = tk.Entry(tab_translation, textvariable=target_lang_var, bg=self.theme["entry_bg"], fg=self.theme["entry_fg"], insertbackground=self.theme["entry_fg"], relief=tk.FLAT)
         target_lang_entry.grid(row=1, column=1, sticky="ew", pady=(0, 6))
 
         # OpenRouter API key
         openrouter_key_var = tk.StringVar(value=current.get("openrouter_api_key", ""))
-        tk.Label(tab_translation, text="OpenRouter API Key", bg=self.theme["panel"], fg=self.theme["label_fg"]).grid(row=2, column=0, sticky="w")
+        tk.Label(tab_translation, text="OpenRouter API Key", bg=self.theme["panel"], fg=self.theme["label_fg"], font=('Noto Serif SC SemiBold', 10, 'normal')).grid(row=2, column=0, sticky="w")
         openrouter_key_entry = tk.Entry(tab_translation, textvariable=openrouter_key_var, show="*", bg=self.theme["entry_bg"], fg=self.theme["entry_fg"], insertbackground=self.theme["entry_fg"], relief=tk.FLAT)
         openrouter_key_entry.grid(row=2, column=1, sticky="ew", pady=(0, 6))
 
         # Model dropdown (dynamic via OpenRouter API)
         model_display_var = tk.StringVar(value=tsettings.get("selected_model", "openrouter/auto"))
-        tk.Label(tab_translation, text="OpenRouter Model", bg=self.theme["panel"], fg=self.theme["label_fg"]).grid(row=3, column=0, sticky="w")
+        tk.Label(tab_translation, text="OpenRouter Model", bg=self.theme["panel"], fg=self.theme["label_fg"], font=('Noto Serif SC SemiBold', 10, 'normal')).grid(row=3, column=0, sticky="w")
         model_combo = ttk.Combobox(tab_translation, textvariable=model_display_var, values=[model_display_var.get()], state="normal")
         model_combo.grid(row=3, column=1, sticky="ew", pady=(0, 6))
         # Refresh models button
@@ -116,11 +116,12 @@ class SettingsWindow(tk.Toplevel):
             padx=10,
             pady=6,
             cursor="hand2",
+            font=('Noto Serif SC SemiBold', 10, 'normal'),
         )
         refresh_models_btn.grid(row=3, column=2, sticky="w")
 
         # JSON body editor for selected model
-        tk.Label(tab_translation, text="Model JSON Body", bg=self.theme["panel"], fg=self.theme["label_fg"]).grid(row=4, column=0, sticky="nw")
+        tk.Label(tab_translation, text="Model JSON Body", bg=self.theme["panel"], fg=self.theme["label_fg"], font=('Noto Serif SC SemiBold', 10, 'normal')).grid(row=4, column=0, sticky="nw")
         body_text = tk.Text(tab_translation, height=10, bg=self.theme["entry_bg"], fg=self.theme["entry_fg"], insertbackground=self.theme["entry_fg"], relief=tk.FLAT)
         body_text.grid(row=4, column=1, sticky="nsew", pady=(0, 6))
 
@@ -415,7 +416,7 @@ class SettingsWindow(tk.Toplevel):
             _populate_models_async(show_messages=False)
 
         # Global prompt editor
-        tk.Label(tab_translation, text="Global Prompt", bg=self.theme["panel"], fg=self.theme["label_fg"]).grid(row=5, column=0, sticky="nw")
+        tk.Label(tab_translation, text="Global Prompt", bg=self.theme["panel"], fg=self.theme["label_fg"], font=('Noto Serif SC SemiBold', 10, 'normal')).grid(row=5, column=0, sticky="nw")
         prompt_text = tk.Text(tab_translation, height=8, bg=self.theme["entry_bg"], fg=self.theme["entry_fg"], insertbackground=self.theme["entry_fg"], relief=tk.FLAT)
         prompt_text.grid(row=5, column=1, sticky="nsew")
         prompt_text.insert("1.0", tsettings.get("global_prompt", DEFAULT_PROMPT))
@@ -475,11 +476,11 @@ class SettingsWindow(tk.Toplevel):
         footer = tk.Frame(self, bg=self.theme["panel"]) 
         footer.pack(fill=tk.X, pady=(12, 12))
 
-        cancel_btn = tk.Button(footer, text="Cancel", command=self._on_cancel, bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief=tk.FLAT, padx=16, pady=8, cursor="hand2")
+        cancel_btn = tk.Button(footer, text="Cancel", command=self._on_cancel, bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief=tk.FLAT, padx=16, pady=8, cursor="hand2", font=('Noto Serif SC SemiBold', 10, 'normal'))
         cancel_btn.pack(side=tk.RIGHT, padx=(0, 8))
 
         # Save applies both tabs
-        save_btn = tk.Button(footer, text="Save", command=on_save_translation, bg=self.theme["accent"], fg=self.theme["button_fg"], activebackground=self.theme["accent_active"], relief=tk.FLAT, padx=16, pady=8, cursor="hand2")
+        save_btn = tk.Button(footer, text="Save", command=on_save_translation, bg=self.theme["accent"], fg=self.theme["button_fg"], activebackground=self.theme["accent_active"], relief=tk.FLAT, padx=16, pady=8, cursor="hand2", font=('Noto Serif SC SemiBold', 10, 'normal'))
         save_btn.pack(side=tk.RIGHT)
 
         self.bind("<Return>", lambda e: self._on_save())
