@@ -685,40 +685,69 @@ def find_longest_line_lengths():
 
 # Function to adjust the column widths based on the content
 def adjust_column_widths():
-    min_time_width = 0 if not lyrics_synced else 100
     max_original_length, max_translated_length, line_count = find_longest_line_lengths()
 
     root.update_idletasks()
-    
-    # Calculate widths based on content with better proportions
-    orig_length = max(max_original_length * 12, 300)  # Minimum width for original lyrics
-    trans_length = max(max_translated_length * 12, 300)  # Minimum width for translated lyrics
 
-    # Adjust for different languages
-    if language == "ja":
-        orig_length = max(max_original_length * 18, 300)
-    if language == "ru":
-        orig_length = max(max_original_length * 14, 300)
-        trans_length = max(max_translated_length * 15, 300)
-
-    # Calculate window dimensions
-    total_width = min_time_width + orig_length + trans_length + 60  # Extra padding
-    height = min(line_count * 35 + 200, 800)  # Cap height at 800px
-
-    # Get current window width
+    # Get current window width and available content area
     current_width = root.winfo_width()
     if current_width < 1:  # Window not yet rendered
         current_width = 1200  # Default width
 
-    # Update column widths
-    tree.column("Time", width=min_time_width, minwidth=min_time_width)
-    tree.column("Original Lyrics", width=orig_length, minwidth=250)
-    tree.column("Translated Lyrics", width=trans_length, minwidth=250)
-    
-    # Update window geometry if needed
-    if total_width > current_width:
-        root.geometry(f"{total_width}x{height}")
+    # Account for padding and scrollbar
+    available_width = current_width - 60  # Remove padding
+
+    # Use proportional sizing for consistent column spacing
+    if lyrics_synced:
+        # Time column gets 15% of available width, min 80px, max 120px
+        time_width = max(80, min(120, int(available_width * 0.15)))
+        # Original and translated lyrics split the remaining 85% equally
+        lyrics_width = int((available_width - time_width) * 0.5)
     else:
+        # No time column for unsynced lyrics
+        time_width = 0
+        # Split available width equally between original and translated columns
+        lyrics_width = int(available_width * 0.5)
+
+    # Ensure minimum widths for readability
+    min_lyrics_width = 200
+    lyrics_width = max(lyrics_width, min_lyrics_width)
+
+    # Calculate content-based preferred widths for comparison
+    orig_content_width = max(max_original_length * 12, 250)
+    trans_content_width = max(max_translated_length * 12, 250)
+
+    # Adjust for different languages (character width multipliers)
+    if language == "ja":
+        orig_content_width = max(max_original_length * 18, 250)
+    elif language == "ru":
+        orig_content_width = max(max_original_length * 14, 250)
+        trans_content_width = max(max_translated_length * 15, 250)
+    else:
+        # Default multiplier for other languages
+        orig_content_width = max(max_original_length * 12, 250)
+        trans_content_width = max(max_translated_length * 12, 250)
+
+    # Use the larger of proportional width or content width, but cap at reasonable maximums
+    orig_length = max(lyrics_width, min(orig_content_width, 600))
+    trans_length = max(lyrics_width, min(trans_content_width, 600))
+
+    # Calculate required total width
+    total_content_width = time_width + orig_length + trans_length + 60
+
+    # Calculate height based on line count
+    height = min(line_count * 35 + 200, 800)  # Cap height at 800px
+
+    # Update column widths with consistent proportions
+    tree.column("Time", width=time_width, minwidth=time_width)
+    tree.column("Original Lyrics", width=orig_length, minwidth=min_lyrics_width)
+    tree.column("Translated Lyrics", width=trans_length, minwidth=min_lyrics_width)
+
+    # Only resize window if content genuinely requires more space
+    if total_content_width > current_width:
+        root.geometry(f"{total_content_width}x{height}")
+    else:
+        # Keep current width but update height if needed
         root.geometry(f"{current_width}x{height}")
 
 # Function to toggle floating window
