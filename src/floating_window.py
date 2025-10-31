@@ -97,6 +97,26 @@ class FloatingLyricsWindow:
         title_frame.bind('<Motion>', self.on_motion)
         title_frame.bind('<Button-1>', self.start_drag)
 
+        # Close button positioned near the top-right corner of the floating window
+        self.close_button = tk.Button(
+            self.window,
+            text="✕",
+            font=(self.selected_font, max(10, self.font_size - 2), 'normal'),
+            bg=SPOTIFY_DARK,
+            fg=SPOTIFY_LIGHT_GRAY,
+            activebackground=SPOTIFY_GRAY,
+            activeforeground=SPOTIFY_WHITE,
+            bd=0,
+            highlightthickness=0,
+            padx=8,
+            pady=2,
+            relief=tk.FLAT,
+            cursor="hand2",
+            command=self.close
+        )
+        self.close_button.place(relx=1.0, rely=0.0, x=-2, y=2, anchor='ne')
+        self.close_button.lift()
+
         # Calculate font styles based on settings
         song_font_style = 'bold' if self.font_bold else 'normal'
         artist_font_style = 'normal' if self.font_bold else 'normal'  # Artist stays normal
@@ -178,6 +198,9 @@ class FloatingLyricsWindow:
         Args:
             event: Mouse event
         """
+        if self._pointer_over_close_button(event.x_root, event.y_root):
+            self.resize_edge = None
+            return
         # Capture starting positions and geometry in screen coordinates
         self.start_x_root = event.x_root
         self.start_y_root = event.y_root
@@ -315,6 +338,11 @@ class FloatingLyricsWindow:
         Args:
             event: Mouse event
         """
+        pointer_x = self.window.winfo_pointerx()
+        pointer_y = self.window.winfo_pointery()
+        if self._pointer_over_close_button(pointer_x, pointer_y):
+            self.window.config(cursor="")
+            return
         width = self.window.winfo_width()
         height = self.window.winfo_height()
         margin = self.resize_margin
@@ -322,8 +350,8 @@ class FloatingLyricsWindow:
         # Compute pointer position relative to the toplevel client area for accuracy
         # This ensures correct coordinates even when hovering over child widgets
         try:
-            x_rel = self.window.winfo_pointerx() - self.window.winfo_rootx()
-            y_rel = self.window.winfo_pointery() - self.window.winfo_rooty()
+            x_rel = pointer_x - self.window.winfo_rootx()
+            y_rel = pointer_y - self.window.winfo_rooty()
         except Exception:
             # Fallback: convert widget coordinates to toplevel coordinates
             try:
@@ -373,6 +401,20 @@ class FloatingLyricsWindow:
         available_width = window_width - 50
         self.original_label.config(wraplength=available_width)
         self.translated_label.config(wraplength=available_width)
+
+    def _pointer_over_close_button(self, x_root, y_root):
+        """Check if the current pointer position overlaps the close button."""
+        if not hasattr(self, 'close_button') or not self.close_button:
+            return False
+        try:
+            btn_x = self.close_button.winfo_rootx()
+            btn_y = self.close_button.winfo_rooty()
+            btn_w = self.close_button.winfo_width()
+            btn_h = self.close_button.winfo_height()
+        except Exception:
+            return False
+
+        return btn_x <= x_root <= btn_x + btn_w and btn_y <= y_root <= btn_y + btn_h
 
     def update_lyrics(self, song_name, artist_name=None, current_line=None, position_ms=0, duration_ms=0, translated_title=None):
         """Update the displayed lyrics.
@@ -571,6 +613,8 @@ class FloatingLyricsWindow:
         # Apply font settings with appropriate scaling
         self.song_label.config(font=(font_name, font_size, song_font_style))
         self.artist_label.config(font=(font_name, max(8, font_size - 2), artist_font_style))
+        if hasattr(self, 'close_button') and self.close_button:
+            self.close_button.config(font=(font_name, max(10, font_size - 2), 'normal'))
         self.original_label.config(font=(font_name, font_size + 6, original_font_style))
         self.translated_label.config(font=(font_name, font_size + 2, translated_font_style))
 
