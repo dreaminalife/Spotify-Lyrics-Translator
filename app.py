@@ -2,6 +2,8 @@ import tkinter as tk
 from tkinter import ttk
 import threading
 import logging
+import time
+import bisect
 import sv_ttk
 
 from src.spotify_client import SpotifyClient
@@ -47,6 +49,67 @@ last_current_line = None
 current_lyrics_source = "Unknown"
 current_translation_source = "Unknown"
 selected_font = "Microsoft YaHei UI"  # Default font (will be updated after tkinter init)
+current_highlighted_item = None
+user_scroll_lock_until = 0.0
+lyrics_tree_items = []
+lyrics_timecodes = []
+
+# Playback polling cache/state
+playback_cache = {
+    'payload': None,
+    'position_ms': 0,
+    'last_update': 0.0,
+}
+playback_lock = threading.Lock()
+playback_polling_thread = None
+playback_polling_stop = threading.Event()
+
+
+def _update_playback_cache(playback, position):
+    """Store the latest playback payload and position with a timestamp."""
+    now = time.monotonic()
+    with playback_lock:
+        playback_cache['payload'] = playback
+        playback_cache['position_ms'] = int(position or 0)
+        playback_cache['last_update'] = now
+
+
+def _playback_polling_loop():
+    """Continuously refresh cached playback state in the background."""
+    while not playback_polling_stop.is_set():
+        client = spotify_client
+        if not client:
+            playback_polling_stop.wait(1.5)
+            continue
+
+        try:
+            playback, position = client.get_current_playback()
+        except Exception as exc:
+            logging.debug(f"Playback polling failed: {exc}")
+            playback = None
+            position = 0
+
+        _update_playback_cache(playback, position)
+
+        is_playing = playback.get('is_playing', False) if playback else False
+        interval = 0.5 if is_playing else 3.0
+        playback_polling_stop.wait(interval)
+
+
+def start_playback_polling():
+    """Start the playback polling thread if it is not already running."""
+    global playback_polling_thread
+
+    if playback_polling_thread and playback_polling_thread.is_alive():
+        return
+
+    playback_polling_stop.clear()
+    playback_polling_thread = threading.Thread(
+        target=_playback_polling_loop,
+        name="PlaybackPoller",
+        daemon=True,
+    )
+    playback_polling_thread.start()
 
 def get_selected_font():
     """Get the currently selected font from settings."""
@@ -138,6 +201,7 @@ def init_spotify_client(settings):
         # Add UtaNet provider as last fallback (search + log only for now)
         providers.append(UtaNetLyricsProvider())
         lyrics_service = LyricsService(providers)
+        start_playback_polling()
     except Exception as e:
         print(f"Error initializing Spotify client: {e}")
         try:
@@ -290,26 +354,37 @@ def merge_translations_into_current(translated_lyrics):
 
 # Function to get the current song and playback position
 def get_current_playback_position():
-    if not spotify_client:
+    with playback_lock:
+        cached_payload = playback_cache['payload']
+        base_position = playback_cache['position_ms']
+        last_update = playback_cache['last_update']
+
+    if not cached_payload:
         return None, 0
-    return spotify_client.get_current_playback()
+
+    position_ms = int(base_position or 0)
+    is_playing = cached_payload.get('is_playing', False)
+
+    if is_playing and last_update:
+        elapsed_ms = int(max(0.0, (time.monotonic() - last_update)) * 1000)
+        item = cached_payload.get('item') or {}
+        duration_ms = int(item.get('duration_ms') or 0)
+
+        if duration_ms:
+            position_ms = min(position_ms + elapsed_ms, duration_ms)
+        else:
+            position_ms = max(0, position_ms + elapsed_ms)
+
+    return cached_payload, position_ms
 
 # Function to update the Treeview and the current time label
 def update_display():
     global current_song_id, floating_window, lyrics_synced, last_current_line
+    global current_highlighted_item, user_scroll_lock_until
     current_song, current_position = get_current_playback_position()
 
     # Get playback state to determine update behavior
     is_playing = current_song.get('is_playing', False) if current_song else False
-
-    # Only clear and re-highlight current line when song is playing
-    if is_playing:
-        # Clear previous current line highlighting
-        for item in tree.get_children():
-            tags = list(tree.item(item)['tags'])
-            if 'current' in tags:
-                tags.remove('current')
-                tree.item(item, tags=tags)
 
     if current_song:
         song_id = current_song['item']['id']
@@ -318,6 +393,7 @@ def update_display():
             global last_current_line
             last_current_line = None  # Clear last current line when switching songs
             update_lyrics()
+            current_highlighted_item = None
 
         # Update current time label with modern format
         current_time_label.config(text=lyrics_manager.ms_to_min_sec(current_position))
@@ -334,30 +410,58 @@ def update_display():
         else:
             current_song_var.set(f"{song_name} • {artist_name}")
 
-        # Update main window treeview selection and highlight current line (only when synced and playing)
+        # Update main window treeview selection and highlight current line
         last_index = None
-        if lyrics_synced and is_playing:
-            for item in tree.get_children():
-                item_data = tree.item(item)
-                time_str = item_data['values'][0]
-                try:
-                    start_time = int(time_str.split(":")[0]) * 60000 + int(time_str.split(":")[1]) * 1000
-                except Exception:
-                    start_time = -1
-                if start_time <= current_position:
-                    last_index = item
-                else:
-                    break
+        if lyrics_synced and lyrics_timecodes:
+            idx = bisect.bisect_right(lyrics_timecodes, int(current_position)) - 1
+            if idx >= 0 and idx < len(lyrics_tree_items):
+                last_index = lyrics_tree_items[idx]
 
             if last_index:
-                # Highlight the current line
-                tags = list(tree.item(last_index)['tags'])
-                if 'current' not in tags:
-                    tags.append('current')
-                    tree.item(last_index, tags=tags)
+                if current_highlighted_item and current_highlighted_item != last_index:
+                    try:
+                        prev_tags = list(tree.item(current_highlighted_item)['tags'])
+                        if 'current' in prev_tags:
+                            prev_tags.remove('current')
+                            tree.item(current_highlighted_item, tags=prev_tags)
+                    except Exception:
+                        pass
 
-                tree.selection_set(last_index)
-                tree.see(last_index)
+                try:
+                    tags = list(tree.item(last_index)['tags'])
+                    if 'current' not in tags:
+                        tags.append('current')
+                        tree.item(last_index, tags=tags)
+                except Exception:
+                    pass
+
+                current_highlighted_item = last_index
+
+                if is_playing and time.monotonic() > user_scroll_lock_until:
+                    try:
+                        if last_index not in tree.selection():
+                            tree.selection_set(last_index)
+                        tree.see(last_index)
+                    except Exception:
+                        pass
+            elif current_highlighted_item:
+                try:
+                    prev_tags = list(tree.item(current_highlighted_item)['tags'])
+                    if 'current' in prev_tags:
+                        prev_tags.remove('current')
+                        tree.item(current_highlighted_item, tags=prev_tags)
+                except Exception:
+                    pass
+                current_highlighted_item = None
+        elif current_highlighted_item:
+            try:
+                prev_tags = list(tree.item(current_highlighted_item)['tags'])
+                if 'current' in prev_tags:
+                    prev_tags.remove('current')
+                    tree.item(current_highlighted_item, tags=prev_tags)
+            except Exception:
+                pass
+            current_highlighted_item = None
 
         # Update floating window if it exists
         if floating_window and floating_window.is_open():
@@ -378,8 +482,8 @@ def update_display():
                 # Get translated title for floating window
                 original_title, translated_title = lyrics_manager.get_cached_title(song_id)
                 floating_window.update_lyrics(current_song_name, artist_name, current_line, current_position, song_duration, translated_title)
-                # Update play/pause button state
-                floating_window.update_play_pause_button()
+                # Update play/pause button state without extra Spotify calls
+                floating_window.update_play_pause_button(is_playing)
             elif not is_playing and lyrics_synced:
                 # When paused, keep displaying the last current line
                 song_duration = current_song['item']['duration_ms'] if current_song and 'item' in current_song else 0
@@ -387,13 +491,24 @@ def update_display():
                 # Get translated title for floating window
                 original_title, translated_title = lyrics_manager.get_cached_title(song_id)
                 floating_window.update_lyrics(current_song_name, artist_name, last_current_line, current_position, song_duration, translated_title)
+                floating_window.update_play_pause_button(is_playing)
             else:
                 # Unsynced or no song: clear text and avoid progression
                 last_current_line = None
                 floating_window.update_lyrics(current_song_name, artist_name, None, 0, 0)
+                floating_window.update_play_pause_button(is_playing)
         
     else:
         # No song playing or not authenticated yet
+        if current_highlighted_item:
+            try:
+                prev_tags = list(tree.item(current_highlighted_item)['tags'])
+                if 'current' in prev_tags:
+                    prev_tags.remove('current')
+                    tree.item(current_highlighted_item, tags=prev_tags)
+            except Exception:
+                pass
+            current_highlighted_item = None
         current_time_label.config(text="0:00")
         # Try to provide a more helpful hint based on device status
         hint_shown = False
@@ -422,8 +537,11 @@ def update_display():
             current_song_var.set("No song playing")
 
     # Schedule next update with different intervals based on playback state
-    # Poll more frequently when playing (500ms), less frequently when paused (3000ms)
-    poll_interval = 500 if (current_song and current_song.get('is_playing', False)) else 3000
+    # Poll more frequently while playing, ease off when paused or idle
+    if current_song:
+        poll_interval = 400 if current_song.get('is_playing', False) else 1200
+    else:
+        poll_interval = 800
     root.after(poll_interval, update_display)
 
 # Function to update the lyrics in the Treeview
@@ -444,7 +562,8 @@ def update_column_headers():
 
 def update_lyrics():
     global current_song_id, current_lyrics, current_song_name, language, lyrics_synced
-    global current_lyrics_source, current_translation_source
+    global current_lyrics_source, current_translation_source, current_highlighted_item
+    global lyrics_tree_items, lyrics_timecodes
 
     try:
         # Get current playback
@@ -493,6 +612,9 @@ def update_lyrics():
 
             # Clear existing treeview items
             tree.delete(*tree.get_children())
+            lyrics_tree_items = []
+            lyrics_timecodes = []
+            current_highlighted_item = None
 
             if lyrics_data:
                 # Initialize current_lyrics from cached data (already includes translations)
@@ -509,7 +631,12 @@ def update_lyrics():
                 for i, lyric in enumerate(current_lyrics):
                     tag = 'evenrow' if i % 2 == 0 else 'oddrow'
                     time_text = lyrics_manager.ms_to_min_sec(lyric['startTimeMs']) if lyrics_synced else ""
-                    tree.insert("", "end", values=(time_text, lyric['words'], lyric['translated']), tags=(tag,))
+                    item_id = tree.insert("", "end", values=(time_text, lyric['words'], lyric['translated']), tags=(tag,))
+                    lyrics_tree_items.append(item_id)
+                    try:
+                        lyrics_timecodes.append(int(lyric['startTimeMs']))
+                    except Exception:
+                        lyrics_timecodes.append(0)
 
                 # Toggle synced banner and Time heading/column
                 try:
@@ -567,6 +694,9 @@ def update_lyrics():
 
             # Clear existing treeview items
             tree.delete(*tree.get_children())
+            lyrics_tree_items = []
+            lyrics_timecodes = []
+            current_highlighted_item = None
 
             if lyrics_data:
                 # Detect the language of the first line of lyrics
@@ -586,7 +716,12 @@ def update_lyrics():
                 for i, lyric in enumerate(current_lyrics):
                     tag = 'evenrow' if i % 2 == 0 else 'oddrow'
                     time_text = lyrics_manager.ms_to_min_sec(lyric['startTimeMs']) if lyrics_synced else ""
-                    tree.insert("", "end", values=(time_text, lyric['words'], lyric['translated']), tags=(tag,))
+                    item_id = tree.insert("", "end", values=(time_text, lyric['words'], lyric['translated']), tags=(tag,))
+                    lyrics_tree_items.append(item_id)
+                    try:
+                        lyrics_timecodes.append(int(lyric['startTimeMs']))
+                    except Exception:
+                        lyrics_timecodes.append(0)
 
                 # Ensure the UI renders original lyrics immediately before translation starts
                 try:
@@ -661,11 +796,13 @@ def update_lyrics():
 
 # Function to update the Treeview with translated lyrics from current_lyrics
 def update_translations():
-    global current_lyrics, lyrics_synced
+    global current_lyrics, lyrics_synced, lyrics_tree_items
 
     # Rebuild the translated lyrics column from current_lyrics
     updated_count = 0
-    for i, item in enumerate(tree.get_children()):
+    for i, item in enumerate(lyrics_tree_items):
+        if not tree.exists(item):
+            continue
         item_data = tree.item(item)
         if lyrics_synced:
             start_time = item_data['values'][0]
@@ -1320,6 +1457,21 @@ def _on_lyric_double_click(event=None):
             pass
 
 tree.bind("<Double-Button-1>", _on_lyric_double_click)
+
+
+def _record_user_tree_interaction(event=None):
+    """Temporarily disable auto-scroll while the user is interacting."""
+    global user_scroll_lock_until
+    user_scroll_lock_until = time.monotonic() + 2.0
+    return None
+
+
+tree.bind("<ButtonPress-1>", _record_user_tree_interaction, add="+")
+tree.bind("<MouseWheel>", _record_user_tree_interaction, add="+")
+tree.bind("<Shift-MouseWheel>", _record_user_tree_interaction, add="+")
+tree.bind("<Control-MouseWheel>", _record_user_tree_interaction, add="+")
+tree.bind("<KeyPress-Up>", _record_user_tree_interaction, add="+")
+tree.bind("<KeyPress-Down>", _record_user_tree_interaction, add="+")
 
 # Initialize settings and client
 ensure_settings_and_init()

@@ -938,19 +938,31 @@ class FloatingLyricsWindow:
         # Run in background thread
         threading.Thread(target=execute_action, daemon=True).start()
 
-    def update_play_pause_button(self):
-        """Update the play/pause button icon based on current playback state."""
-        if self.spotify_client and hasattr(self, 'play_pause_button'):
+    def update_play_pause_button(self, is_playing=None):
+        """Update the play/pause button icon.
+
+        Args:
+            is_playing: Optional bool indicating current playback state. When
+                provided, avoids querying Spotify from the UI thread.
+        """
+        if not hasattr(self, 'play_pause_button'):
+            return
+
+        state_known = is_playing is not None
+
+        if not state_known and self.spotify_client:
             try:
                 state = self.spotify_client.get_playback_state()
                 if state:
                     is_playing = state.get('is_playing', False)
-                    self.play_pause_button.config(text="⏸" if is_playing else "▶")
-                else:
-                    self.play_pause_button.config(text="▶")
+                    state_known = True
             except Exception as e:
                 print(f"Error updating play/pause button: {e}")
-                self.play_pause_button.config(text="▶")
+
+        if state_known:
+            self.play_pause_button.config(text="⏸" if is_playing else "▶")
+        else:
+            self.play_pause_button.config(text="▶")
 
     def update_background_color(self, color: str):
         """Update the floating window background color."""
