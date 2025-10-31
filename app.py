@@ -1165,6 +1165,46 @@ def _copy_tree_selection(event=None):
 tree.bind("<Control-c>", _copy_tree_selection)
 tree.bind("<Control-Insert>", _copy_tree_selection)
 
+# Enable double-click to seek to lyric timestamp (only for synced lyrics)
+def _on_lyric_double_click(event=None):
+    """Handle clicking on a lyric line to seek to that timestamp."""
+    global lyrics_synced
+    if not lyrics_synced:
+        try:
+            status_label.config(text="Click-to-seek works only with synced lyrics")
+        except Exception:
+            pass
+        return
+    item_id = tree.identify_row(event.y)
+    if not item_id:
+        return
+    vals = tree.item(item_id).get('values', [])
+    if not vals or not vals[0]:  # Time column empty on unsynced
+        return
+    try:
+        mm, ss = map(int, str(vals[0]).split(':'))
+        pos_ms = (mm * 60 + ss) * 1000
+    except Exception:
+        return
+    # Attempt seek + play
+    if spotify_client and spotify_client.seek_and_play(pos_ms):
+        try:
+            status_label.config(text=f"Jumped to {vals[0]}")
+        except Exception:
+            pass
+    else:
+        # Optional: check device status for better hint
+        try:
+            ds = spotify_client.get_device_status() if spotify_client else None
+            if ds and ds.get('devices') and not ds.get('active_device'):
+                status_label.config(text="No active device. Open Spotify and press Play once.")
+            else:
+                status_label.config(text="Could not seek. Check Spotify device and permissions.")
+        except Exception:
+            pass
+
+tree.bind("<Double-Button-1>", _on_lyric_double_click)
+
 # Initialize settings and client
 ensure_settings_and_init()
 init_translation_client()

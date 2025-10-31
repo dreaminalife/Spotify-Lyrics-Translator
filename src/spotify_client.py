@@ -23,7 +23,7 @@ class SpotifyClient:
             client_id=client_id,
             client_secret=client_secret,
             redirect_uri=redirect_uri,
-            scope="user-read-playback-state user-read-currently-playing user-read-private user-read-email"
+            scope="user-read-playback-state user-read-currently-playing user-read-private user-read-email user-modify-playback-state"
         ))
         
         # Initialize Syrics API for lyrics
@@ -125,4 +125,54 @@ class SpotifyClient:
         except Exception as e:
             print(f"Error fetching device status: {e}")
             return { 'devices': [], 'active_device': None }
+
+    def seek_to_position(self, position_ms: int) -> bool:
+        """Seek to a specific position in the current track.
+        
+        Args:
+            position_ms: Position in milliseconds to seek to
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            self.sp.seek_track(int(position_ms))
+            return True
+        except Exception as e:
+            print(f"Error seeking to {position_ms}: {e}")
+            return False
+
+    def ensure_playing(self) -> bool:
+        """Ensure playback is active (start if paused).
+        
+        Returns:
+            bool: True if playback is active or was started, False otherwise
+        """
+        try:
+            pb = self.sp.current_playback()
+            if not pb:
+                # No active device
+                return False
+            if not pb.get('is_playing'):
+                self.sp.start_playback()
+            return True
+        except Exception as e:
+            print(f"Error ensuring playback: {e}")
+            return False
+
+    def seek_and_play(self, position_ms: int) -> bool:
+        """Seek to a position and ensure playback is active.
+        
+        Args:
+            position_ms: Position in milliseconds to seek to
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        ok = self.seek_to_position(position_ms)
+        if not ok:
+            return False
+        # If paused, start playback
+        self.ensure_playing()
+        return True
 
