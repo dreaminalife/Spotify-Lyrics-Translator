@@ -835,6 +835,30 @@ def toggle_floating_window():
         floating_window = FloatingLyricsWindow(root, font_name, font_size, is_bold)
         toggle_button.config(text="Hide Floating Lyrics")
 
+def update_song_title_wraplength():
+    """Update the wraplength of the song title label based on window width."""
+    try:
+        # Get window width
+        window_width = root.winfo_width()
+        if window_width < 1:
+            return
+        
+        # Estimate space taken by left side (icon + title + padding)
+        # Icon: ~30px, "Lyrics Translator": ~200px, padding: ~60px
+        left_side_width = 290
+        
+        # Right padding: 20px
+        right_padding = 20
+        
+        # Calculate available width for song title
+        available_width = window_width - left_side_width - right_padding
+        
+        # Ensure minimum width and update wraplength
+        wraplength = max(200, available_width - 50)  # Leave some margin
+        current_song_label.config(wraplength=wraplength)
+    except Exception:
+        pass
+
 def refresh_ui_font():
     """Refresh all main window UI elements with the currently selected font settings."""
     font_name, font_size, is_bold = get_font_settings()
@@ -849,6 +873,9 @@ def refresh_ui_font():
     toggle_button.config(font=(font_name, 12, font_style))
     refresh_button.config(font=(font_name, 12, font_style))
     status_label.config(font=(font_name, 11, font_style))
+    
+    # Update wraplength after font refresh
+    root.after(100, update_song_title_wraplength)
 
     # Update Treeview styles
     style.configure(
@@ -936,36 +963,34 @@ app_title = tk.Label(
 )
 app_title.pack(side=tk.LEFT)
 
-# Current song info frame
+# Current song info frame - positioned on the right side
 song_info_frame = tk.Frame(header_frame, bg=SPOTIFY_DARK)
-song_info_frame.pack(side=tk.RIGHT, padx=20, pady=15)
+song_info_frame.pack(side=tk.RIGHT, padx=(0, 20), pady=15, anchor='e')
 
-# Current song label as read-only Entry to allow selection/copy
+# Current song label as Label - right-aligned to stick to right border
+# Wraplength will be updated dynamically based on window width
 current_song_var = tk.StringVar(value="No song playing")
-current_song_label = tk.Entry(
+current_song_label = tk.Label(
     song_info_frame,
     textvariable=current_song_var,
     font=(get_selected_font(), 14, 'bold'),
     fg=SPOTIFY_LIGHT_GRAY,
     bg=SPOTIFY_DARK,
-    readonlybackground=SPOTIFY_DARK,
-    relief=tk.FLAT,
-    state="readonly",
-    borderwidth=0,
-    highlightthickness=0,
-    insertbackground=SPOTIFY_LIGHT_GRAY
+    anchor='e',  # Right-align the text
+    justify='right'
 )
-current_song_label.pack()
+current_song_label.pack(anchor='e')
 
-# Current time label with modern styling
+# Current time label with modern styling - right-aligned
 current_time_label = tk.Label(
     song_info_frame,
     text="0:00",
     font=(get_selected_font(), 12, 'bold'),
     fg=SPOTIFY_GREEN,
-    bg=SPOTIFY_DARK
+    bg=SPOTIFY_DARK,
+    anchor='e'  # Right-align the time as well
 )
-current_time_label.pack()
+current_time_label.pack(anchor='e')
 
 # Control panel frame
 control_frame = tk.Frame(root, bg=SPOTIFY_BLACK, height=60)
@@ -1246,6 +1271,18 @@ def initialize_font_settings():
         print(f"Warning: Could not initialize font settings: {e}")
 
 initialize_font_settings()
+
+# Bind window resize event to update song title wraplength
+def on_window_configure(event=None):
+    """Handle window resize events."""
+    # Only handle root window resize events
+    if event and event.widget == root:
+        update_song_title_wraplength()
+
+root.bind('<Configure>', on_window_configure)
+
+# Initialize wraplength after window is ready
+root.after(100, update_song_title_wraplength)
 
 # Start the update loop
 root.after(500, update_display)
