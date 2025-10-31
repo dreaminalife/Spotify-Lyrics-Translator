@@ -695,11 +695,18 @@ def update_translations():
 
 def _highlight_translation(item, step=0):
     """Add a subtle highlight animation for newly translated lines.
-    
+
     Args:
         item: Treeview item to highlight
         step: Current step in the animation
     """
+    try:
+        # Check if item still exists
+        tree.item(item)
+    except:
+        # Item no longer exists, stop the animation
+        return
+
     if step < 5:
         # Get current values
         current_values = list(tree.item(item)['values'])
@@ -721,10 +728,14 @@ def _highlight_translation(item, step=0):
         root.after(100, lambda: _highlight_translation(item, step + 1))
     else:
         # Ensure highlight tag is removed
-        tags = list(tree.item(item)['tags'])
-        if 'highlight' in tags:
-            tags.remove('highlight')
-            tree.item(item, tags=tags)
+        try:
+            tags = list(tree.item(item)['tags'])
+            if 'highlight' in tags:
+                tags.remove('highlight')
+                tree.item(item, tags=tags)
+        except:
+            # Item no longer exists, skip cleanup
+            pass
 
 # Function to find the longest line length in original and translated lyrics
 def find_longest_line_lengths():

@@ -6,6 +6,7 @@ import requests
 import logging
 from bs4 import BeautifulSoup
 import json
+import time
 
 from .settings_manager import read_secrets
 
@@ -191,22 +192,37 @@ class UtaNetLyricsProvider:
         }
         headers = {"User-Agent": self._ua}
 
-        try:
-            # Keep under service timeout budget to avoid hanging the caller
-            resp = requests.get(self.SEARCH_URL, params=params, headers=headers, timeout=1.8)
-        except Exception as e:
-            logging.debug(f"UtaNetLyricsProvider: Request failed: {e}")
-            return None
+        # Retry policy: initial + 2 retries (total 3 attempts) for Uta-Net search
+        delays = [0.0, 0.15]
+        resp = None
 
-        if resp.status_code != 200:
-            logging.debug(f"UtaNetLyricsProvider: HTTP {resp.status_code} response")
+        for attempt in range(len(delays) + 1):
+            try:
+                # Keep under service timeout budget to avoid hanging the caller
+                resp = requests.get(self.SEARCH_URL, params=params, headers=headers, timeout=1.8)
+                if resp.status_code == 200:
+                    break  # Success, exit retry loop
+                else:
+                    logging.info(f"UtaNetLyricsProvider: HTTP {resp.status_code} response (attempt {attempt + 1})")
+                    if attempt < len(delays):
+                        time.sleep(delays[attempt])
+                    else:
+                        return None  # All attempts failed
+            except Exception as e:
+                logging.info(f"UtaNetLyricsProvider: Request failed (attempt {attempt + 1}): {e}")
+                if attempt < len(delays):
+                    time.sleep(delays[attempt])
+                else:
+                    return None  # All attempts failed
+
+        if not resp or resp.status_code != 200:
             return None
 
         try:
             soup = BeautifulSoup(resp.text, "html.parser")
             container = soup.find(class_="songlist-table-body")
         except Exception as e:
-            logging.debug(f"UtaNetLyricsProvider: Failed to parse HTML: {e}")
+            logging.info(f"UtaNetLyricsProvider: Failed to parse HTML: {e}")
             return None
 
         if not container:

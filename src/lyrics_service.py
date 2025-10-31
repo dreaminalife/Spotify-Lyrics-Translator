@@ -32,9 +32,10 @@ class LyricsService:
             provider_name = provider.__class__.__name__
             logging.info(f"Trying provider: {provider_name} for {track_info}")
 
-            # Default attempts: initial + retries. Special-case UtaNet to 1 attempt
+            # Default attempts: initial + retries (total 3 attempts per provider)
+            # UtaNet handles its own retries internally for the search request, LRCLib gets no retries, so only 1 attempt here
             attempts = 1 + len(delays)
-            if 'UtaNet' in provider_name:
+            if 'UtaNet' in provider_name or 'LRCLib' in provider_name:
                 attempts = 1
             for i in range(attempts):
                 attempt_num = i + 1
