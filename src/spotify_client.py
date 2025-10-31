@@ -162,10 +162,10 @@ class SpotifyClient:
 
     def seek_and_play(self, position_ms: int) -> bool:
         """Seek to a position and ensure playback is active.
-        
+
         Args:
             position_ms: Position in milliseconds to seek to
-            
+
         Returns:
             bool: True if successful, False otherwise
         """
@@ -175,4 +175,113 @@ class SpotifyClient:
         # If paused, start playback
         self.ensure_playing()
         return True
+
+    def play_pause(self) -> bool:
+        """Toggle play/pause for current playback.
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            pb = self.sp.current_playback()
+            if not pb:
+                return False
+            if pb.get('is_playing'):
+                self.sp.pause_playback()
+            else:
+                self.sp.start_playback()
+            return True
+        except Exception as e:
+            print(f"Error toggling play/pause: {e}")
+            return False
+
+    def next_track(self) -> bool:
+        """Skip to the next track.
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            self.sp.next_track()
+            return True
+        except Exception as e:
+            print(f"Error skipping to next track: {e}")
+            return False
+
+    def previous_track(self) -> bool:
+        """Go to the previous track.
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            self.sp.previous_track()
+            return True
+        except Exception as e:
+            print(f"Error going to previous track: {e}")
+            return False
+
+    def seek_forward(self, seconds: int = 10) -> bool:
+        """Seek forward by specified number of seconds.
+
+        Args:
+            seconds: Number of seconds to seek forward (default: 10)
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            pb = self.sp.current_playback()
+            if not pb or not pb.get('item'):
+                return False
+
+            current_pos = pb.get('progress_ms', 0)
+            duration = pb['item'].get('duration_ms', 0)
+            new_pos = min(current_pos + (seconds * 1000), duration)
+
+            return self.seek_to_position(int(new_pos))
+        except Exception as e:
+            print(f"Error seeking forward {seconds}s: {e}")
+            return False
+
+    def seek_backward(self, seconds: int = 10) -> bool:
+        """Seek backward by specified number of seconds.
+
+        Args:
+            seconds: Number of seconds to seek backward (default: 10)
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            pb = self.sp.current_playback()
+            if not pb:
+                return False
+
+            current_pos = pb.get('progress_ms', 0)
+            new_pos = max(current_pos - (seconds * 1000), 0)
+
+            return self.seek_to_position(int(new_pos))
+        except Exception as e:
+            print(f"Error seeking backward {seconds}s: {e}")
+            return False
+
+    def get_playback_state(self):
+        """Get current playback state information.
+
+        Returns:
+            dict: Playback state info or None if no active playback
+        """
+        try:
+            pb = self.sp.current_playback()
+            if not pb:
+                return None
+            return {
+                'is_playing': pb.get('is_playing', False),
+                'progress_ms': pb.get('progress_ms', 0),
+                'item': pb.get('item')
+            }
+        except Exception as e:
+            print(f"Error getting playback state: {e}")
+            return None
 

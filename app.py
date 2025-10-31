@@ -378,6 +378,8 @@ def update_display():
                 # Get translated title for floating window
                 original_title, translated_title = lyrics_manager.get_cached_title(song_id)
                 floating_window.update_lyrics(current_song_name, artist_name, current_line, current_position, song_duration, translated_title)
+                # Update play/pause button state
+                floating_window.update_play_pause_button()
             elif not is_playing and lyrics_synced:
                 # When paused, keep displaying the last current line
                 song_duration = current_song['item']['duration_ms'] if current_song and 'item' in current_song else 0
@@ -838,7 +840,7 @@ def toggle_floating_window():
     else:
         # Get floating window font settings
         font_name, font_size, is_bold = get_floating_font_settings()
-        floating_window = FloatingLyricsWindow(root, font_name, font_size, is_bold)
+        floating_window = FloatingLyricsWindow(root, spotify_client, font_name, font_size, is_bold)
         toggle_button.config(text="Hide Floating Lyrics")
 
 def update_song_title_wraplength():
