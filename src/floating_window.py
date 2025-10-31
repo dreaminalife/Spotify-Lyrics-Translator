@@ -4,6 +4,7 @@ from tkinter import ttk
 import threading
 from .translation_settings import read_translation_settings, save_translation_settings, get_theme_colors
 from .font_manager import get_default_chinese_font
+import time
 
 
 class FloatingLyricsWindow:
@@ -25,6 +26,11 @@ class FloatingLyricsWindow:
 
         # Store Spotify client for playback controls
         self.spotify_client = spotify_client
+        
+        # Timestamp for preventing polling override after play/pause clicks
+        self._last_play_pause_click = 0
+        # Timestamp for debouncing after grace period
+        self._last_update_time = 0
 
         settings = read_translation_settings()
         self.theme_colors = get_theme_colors()
@@ -874,21 +880,18 @@ class FloatingLyricsWindow:
             # Optimistic update: immediately toggle the button icon
             current_text = self.play_pause_button.cget("text")
             self.play_pause_button.config(text="⏸" if current_text == "▶" else "▶")
+            
+            # Record the timestamp to prevent polling from overriding our update
+            self._last_play_pause_click = time.monotonic()
+            print(f"[DEBUG] Set click timestamp: {self._last_play_pause_click}")
 
             # Make the API call asynchronously to avoid blocking UI
             def toggle_playback():
                 try:
                     success = self.spotify_client.play_pause()
-                    if success:
-                        # Update button to reflect actual state after a brief delay
-                        self.window.after(50, self.update_play_pause_button)
-                    else:
-                        # Revert on failure
-                        self.play_pause_button.config(text=current_text)
+                    # No need to update button here - let polling handle it
                 except Exception as e:
                     print(f"Error toggling playback: {e}")
-                    # Revert on error
-                    self.play_pause_button.config(text=current_text)
 
             # Execute API call in background thread
             threading.Thread(target=toggle_playback, daemon=True).start()
@@ -948,6 +951,32 @@ class FloatingLyricsWindow:
         if not hasattr(self, 'play_pause_button'):
             return
 
+        current_time = time.monotonic()
+        
+        # Check if we recently clicked the button
+        if hasattr(self, '_last_play_pause_click') and self._last_play_pause_click > 0:
+            time_since_click = current_time - self._last_play_pause_click
+            print(f"[DEBUG] Time since click: {time_since_click}s")
+            
+            # During grace period (3 seconds), completely skip updates
+            if time_since_click < 3.0:
+                print("[DEBUG] Skipping button update due to recent click")
+                return
+            else:
+                # Grace period expired, but add a short debounce to prevent rapid updates
+                time_since_grace = time_since_click - 3.0
+                if time_since_grace < 0.5:  # 500ms debounce after grace period
+                    print(f"[DEBUG] Debouncing after grace period: {time_since_grace}s")
+                    return
+                else:
+                    # Clear the timestamp after debounce period
+                    self._last_play_pause_click = 0
+
+        # Debounce rapid successive updates (only update if 200ms have passed since last update)
+        if hasattr(self, '_last_update_time') and current_time - self._last_update_time < 0.2:
+            print(f"[DEBUG] Debouncing rapid update")
+            return
+
         state_known = is_playing is not None
 
         if not state_known and self.spotify_client:
@@ -957,12 +986,23 @@ class FloatingLyricsWindow:
                     is_playing = state.get('is_playing', False)
                     state_known = True
             except Exception as e:
-                print(f"Error updating play/pause button: {e}")
+                print(f"Error updating play_pause_button: {e}")
 
         if state_known:
-            self.play_pause_button.config(text="⏸" if is_playing else "▶")
+            new_text = "⏸" if is_playing else "▶"
+            current_text = self.play_pause_button.cget("text")
+            
+            # Only update if the state actually changed
+            if current_text != new_text:
+                print(f"[DEBUG] Updating button to: {new_text}")
+                self.play_pause_button.config(text=new_text)
+                self._last_update_time = current_time
+            else:
+                print(f"[DEBUG] Button already shows correct state: {new_text}")
         else:
+            print("[DEBUG] Updating button to play (unknown state)")
             self.play_pause_button.config(text="▶")
+            self._last_update_time = current_time
 
     def update_background_color(self, color: str):
         """Update the floating window background color."""
