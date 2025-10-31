@@ -47,6 +47,9 @@ def default_translation_settings() -> Dict[str, Any]:
         "floating_font": "Microsoft YaHei UI",  # Default floating window font
         "floating_font_size": 12,  # Default floating window font size
         "floating_font_bold": True,  # Default floating window bold setting
+        # Floating window persisted size
+        "floating_window_width": 800,
+        "floating_window_height": 200,
     }
 
 

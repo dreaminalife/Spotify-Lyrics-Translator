@@ -1,7 +1,7 @@
 """Floating lyrics window implementation."""
 import tkinter as tk
 from tkinter import ttk
-from .translation_settings import read_translation_settings
+from .translation_settings import read_translation_settings, save_translation_settings
 from .font_manager import get_default_chinese_font
 
 
@@ -44,21 +44,47 @@ class FloatingLyricsWindow:
         # Window configuration with glassmorphic effect
         self.window.attributes('-topmost', True)
         self.window.attributes('-alpha', 0.0)  # Start fully transparent for fade-in effect
-        self.window.geometry("800x200+100+100")  # Increased height to prevent text clipping
+        # Load persisted window size (fallback to defaults)
+        _win_settings = read_translation_settings()
+        _init_w = int(_win_settings.get("floating_window_width", 800))
+        _init_h = int(_win_settings.get("floating_window_height", 200))
+        self.window.geometry(f"{_init_w}x{_init_h}+100+100")  # Increased height to prevent text clipping
         self.window.configure(bg=SPOTIFY_BLACK)
         
         # Add a subtle border
         self.window.configure(highlightbackground=SPOTIFY_GREEN, highlightthickness=1)
         
-        # Make window draggable
+        # Make window draggable and resizable
         self.x = 0
         self.y = 0
-        self.window.bind('<Button-1>', self.start_drag)
-        self.window.bind('<B1-Motion>', self.on_drag)
-        
+        self.resize_edge = None  # Track which edge/corner is being resized
+        self.resize_margin = 10  # Pixels from edge to trigger resize
+        # Track starting geometry/position at mouse down for stable calculations
+        self.start_x_root = 0
+        self.start_y_root = 0
+        self.start_win_x = 0
+        self.start_win_y = 0
+        self.start_width = 0
+        self.start_height = 0
+
         # Create main frame with glassmorphic effect
         main_frame = tk.Frame(self.window, bg=SPOTIFY_DARK, padx=25, pady=20)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
+        
+        # Bind mouse events for dragging and resizing
+        # Bind to toplevel window and main frame to ensure events are captured
+        self.window.bind('<Button-1>', self.start_drag)
+        self.window.bind('<B1-Motion>', self.on_drag)
+        self.window.bind('<ButtonRelease-1>', self.on_release)
+        self.window.bind('<Motion>', self.on_motion)
+        self.window.bind('<Leave>', lambda e: self.window.config(cursor=""))
+        
+        # Also bind Motion to main frame and window to ensure cursor updates work over all widgets
+        main_frame.bind('<Motion>', self.on_motion)
+        main_frame.bind('<Button-1>', self.start_drag)
+        
+        # Update wraplength when geometry changes (e.g., OS-driven resizes)
+        self.window.bind('<Configure>', lambda e: self._update_wraplength(self.window.winfo_width()))
         
         # Add a subtle gradient effect using frames
         gradient_frame = tk.Frame(main_frame, bg=SPOTIFY_BLACK, height=2)
@@ -67,6 +93,9 @@ class FloatingLyricsWindow:
         # Song title and artist container
         title_frame = tk.Frame(main_frame, bg=SPOTIFY_DARK)
         title_frame.pack(fill=tk.X, pady=(0, 8))
+        # Bind Motion to title frame for cursor updates
+        title_frame.bind('<Motion>', self.on_motion)
+        title_frame.bind('<Button-1>', self.start_drag)
 
         # Calculate font styles based on settings
         song_font_style = 'bold' if self.font_bold else 'normal'
@@ -84,6 +113,9 @@ class FloatingLyricsWindow:
             anchor='w'
         )
         self.song_label.pack(side=tk.LEFT)
+        # Bind Motion to label for cursor updates
+        self.song_label.bind('<Motion>', self.on_motion)
+        self.song_label.bind('<Button-1>', self.start_drag)
 
         # Artist name with subtle styling (right-aligned)
         self.artist_label = tk.Label(
@@ -95,6 +127,9 @@ class FloatingLyricsWindow:
             anchor='e'
         )
         self.artist_label.pack(side=tk.RIGHT)
+        # Bind Motion to label for cursor updates
+        self.artist_label.bind('<Motion>', self.on_motion)
+        self.artist_label.bind('<Button-1>', self.start_drag)
 
         # Original lyrics with larger font
         self.original_label = tk.Label(
@@ -108,6 +143,9 @@ class FloatingLyricsWindow:
             justify='left'
         )
         self.original_label.pack(fill=tk.X, pady=(0, 8))
+        # Bind Motion to label for cursor updates
+        self.original_label.bind('<Motion>', self.on_motion)
+        self.original_label.bind('<Button-1>', self.start_drag)
 
         # Translated lyrics with styling
         self.translated_label = tk.Label(
@@ -121,34 +159,221 @@ class FloatingLyricsWindow:
             justify='left'
         )
         self.translated_label.pack(fill=tk.X, pady=(4, 10))  # Added padding top and bottom to prevent clipping
+        # Bind Motion to label for cursor updates
+        self.translated_label.bind('<Motion>', self.on_motion)
+        self.translated_label.bind('<Button-1>', self.start_drag)
 
         # Current line data
         self.current_line = None
-        
+
+        # Set initial wraplength based on window width
+        self._update_wraplength(_init_w)
+
         # Start fade-in animation
         self.fade_in()
     
     def start_drag(self, event):
-        """Start dragging the window.
-        
+        """Start dragging or resizing the window.
+
         Args:
             event: Mouse event
         """
-        self.x = event.x
-        self.y = event.y
+        # Capture starting positions and geometry in screen coordinates
+        self.start_x_root = event.x_root
+        self.start_y_root = event.y_root
+        self.start_win_x = self.window.winfo_x()
+        self.start_win_y = self.window.winfo_y()
+        self.start_width = self.window.winfo_width()
+        self.start_height = self.window.winfo_height()
+
+        # Calculate coordinates relative to toplevel window (not the widget that received the event)
+        # This is important because clicking on child widgets gives coordinates relative to those widgets
+        try:
+            x_rel = self.window.winfo_pointerx() - self.window.winfo_rootx()
+            y_rel = self.window.winfo_pointery() - self.window.winfo_rooty()
+        except Exception:
+            # Fallback: if event was on toplevel, use event.x/y directly
+            # Otherwise try to convert from widget coordinates
+            try:
+                widget_x = event.widget.winfo_rootx() - self.window.winfo_rootx()
+                widget_y = event.widget.winfo_rooty() - self.window.winfo_rooty()
+                x_rel = widget_x + event.x
+                y_rel = widget_y + event.y
+            except Exception:
+                x_rel = getattr(event, 'x', 0)
+                y_rel = getattr(event, 'y', 0)
+
+        width = self.start_width
+        height = self.start_height
+        margin = self.resize_margin
+
+        # Determine which edge/corner is being grabbed (using coordinates relative to window)
+        left = x_rel < margin
+        right = x_rel > width - margin
+        top = y_rel < margin
+        bottom = y_rel > height - margin
+
+        if left and top:
+            self.resize_edge = "nw"
+        elif right and top:
+            self.resize_edge = "ne"
+        elif left and bottom:
+            self.resize_edge = "sw"
+        elif right and bottom:
+            self.resize_edge = "se"
+        elif left:
+            self.resize_edge = "w"
+        elif right:
+            self.resize_edge = "e"
+        elif top:
+            self.resize_edge = "n"
+        elif bottom:
+            self.resize_edge = "s"
+        else:
+            self.resize_edge = None  # Regular drag
     
     def on_drag(self, event):
-        """Handle window dragging.
-        
+        """Handle window dragging or resizing.
+
         Args:
             event: Mouse event
         """
-        deltax = event.x - self.x
-        deltay = event.y - self.y
-        x = self.window.winfo_x() + deltax
-        y = self.window.winfo_y() + deltay
-        self.window.geometry(f"+{x}+{y}")
-    
+        if self.resize_edge:
+            # Handle resizing
+            self.on_resize(event)
+        else:
+            # Handle dragging using root (screen) coordinates for stability
+            dx = event.x_root - self.start_x_root
+            dy = event.y_root - self.start_y_root
+            x = self.start_win_x + dx
+            y = self.start_win_y + dy
+            self.window.geometry(f"+{x}+{y}")
+
+    def on_release(self, event):
+        """Reset resize state on mouse release."""
+        self.resize_edge = None
+
+    def on_resize(self, event):
+        """Handle window resizing using stable starting geometry.
+
+        Args:
+            event: Mouse event
+        """
+        # Calculate deltas in screen coordinates from the initial press
+        dx = event.x_root - self.start_x_root
+        dy = event.y_root - self.start_y_root
+
+        x = self.start_win_x
+        y = self.start_win_y
+        width = self.start_width
+        height = self.start_height
+
+        # Minimum constraints
+        min_width = 400
+        min_height = 150
+
+        if "w" in self.resize_edge:  # Left edge
+            new_x = self.start_win_x + dx
+            new_width = self.start_width - dx
+            if new_width < min_width:
+                # Clamp so width does not go below minimum
+                new_x = self.start_win_x + (self.start_width - min_width)
+                new_width = min_width
+            x = new_x
+            width = new_width
+
+        if "e" in self.resize_edge:  # Right edge
+            new_width = self.start_width + dx
+            if new_width < min_width:
+                new_width = min_width
+            width = new_width
+
+        if "n" in self.resize_edge:  # Top edge
+            new_y = self.start_win_y + dy
+            new_height = self.start_height - dy
+            if new_height < min_height:
+                new_y = self.start_win_y + (self.start_height - min_height)
+                new_height = min_height
+            y = new_y
+            height = new_height
+
+        if "s" in self.resize_edge:  # Bottom edge
+            new_height = self.start_height + dy
+            if new_height < min_height:
+                new_height = min_height
+            height = new_height
+
+        # Apply new geometry
+        self.window.geometry(f"{int(width)}x{int(height)}+{int(x)}+{int(y)}")
+
+        # Update label wraplength based on new width
+        self._update_wraplength(int(width))
+
+    def on_motion(self, event):
+        """Update cursor based on mouse position for resize feedback.
+
+        Args:
+            event: Mouse event
+        """
+        width = self.window.winfo_width()
+        height = self.window.winfo_height()
+        margin = self.resize_margin
+
+        # Compute pointer position relative to the toplevel client area for accuracy
+        # This ensures correct coordinates even when hovering over child widgets
+        try:
+            x_rel = self.window.winfo_pointerx() - self.window.winfo_rootx()
+            y_rel = self.window.winfo_pointery() - self.window.winfo_rooty()
+        except Exception:
+            # Fallback: convert widget coordinates to toplevel coordinates
+            try:
+                widget_x = event.widget.winfo_rootx() - self.window.winfo_rootx()
+                widget_y = event.widget.winfo_rooty() - self.window.winfo_rooty()
+                x_rel = widget_x + event.x
+                y_rel = widget_y + event.y
+            except Exception:
+                x_rel = getattr(event, 'x', 0)
+                y_rel = getattr(event, 'y', 0)
+
+        # Determine cursor based on position relative to window
+        left = x_rel < margin
+        right = x_rel > width - margin
+        top = y_rel < margin
+        bottom = y_rel > height - margin
+
+        # Use Tk-supported cursor names for cross-platform compatibility
+        if left and top:
+            cursor = "top_left_corner"
+        elif right and top:
+            cursor = "top_right_corner"
+        elif left and bottom:
+            cursor = "bottom_left_corner"
+        elif right and bottom:
+            cursor = "bottom_right_corner"
+        elif left:
+            cursor = "left_side"
+        elif right:
+            cursor = "right_side"
+        elif top:
+            cursor = "top_side"
+        elif bottom:
+            cursor = "bottom_side"
+        else:
+            cursor = ""
+
+        self.window.config(cursor=cursor)
+
+    def _update_wraplength(self, window_width):
+        """Update the wraplength of labels based on window width.
+
+        Args:
+            window_width: Current window width
+        """
+        # Account for padding (25px on each side from main_frame)
+        available_width = window_width - 50
+        self.original_label.config(wraplength=available_width)
+        self.translated_label.config(wraplength=available_width)
+
     def update_lyrics(self, song_name, artist_name=None, current_line=None, position_ms=0, duration_ms=0, translated_title=None):
         """Update the displayed lyrics.
 
@@ -291,6 +516,11 @@ class FloatingLyricsWindow:
     def _destroy_window(self):
         """Actually destroy the window after fade out."""
         if self.window:
+            # Persist current size before destroying
+            try:
+                self._save_window_size()
+            except Exception:
+                pass
             self.window.destroy()
             self.window = None
     
@@ -343,4 +573,17 @@ class FloatingLyricsWindow:
         self.artist_label.config(font=(font_name, max(8, font_size - 2), artist_font_style))
         self.original_label.config(font=(font_name, font_size + 6, original_font_style))
         self.translated_label.config(font=(font_name, font_size + 2, translated_font_style))
+
+    def _save_window_size(self):
+        """Persist the current floating window size to translation settings."""
+        try:
+            cur_w = self.window.winfo_width()
+            cur_h = self.window.winfo_height()
+            settings = read_translation_settings()
+            settings["floating_window_width"] = int(cur_w)
+            settings["floating_window_height"] = int(cur_h)
+            save_translation_settings(settings)
+        except Exception:
+            # Best-effort; ignore persistence failures
+            return
 
