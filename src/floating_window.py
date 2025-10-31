@@ -1,7 +1,7 @@
 """Floating lyrics window implementation."""
 import tkinter as tk
 from tkinter import ttk
-from .translation_settings import read_translation_settings, save_translation_settings
+from .translation_settings import read_translation_settings, save_translation_settings, get_theme_colors
 from .font_manager import get_default_chinese_font
 
 
@@ -21,6 +21,9 @@ class FloatingLyricsWindow:
         self.window.title("Floating Lyrics")
         self.window.overrideredirect(True)  # Remove window decorations
 
+        settings = read_translation_settings()
+        self.theme_colors = get_theme_colors()
+
         # Set font settings - use provided values or get from settings
         if font_name is not None and font_size is not None and font_bold is not None:
             self.selected_font = font_name
@@ -29,11 +32,13 @@ class FloatingLyricsWindow:
         else:
             # Fallback to getting from settings (for backward compatibility)
             self.selected_font = self.get_selected_font()
-            settings = read_translation_settings()
             self.font_size = settings.get("floating_font_size", 12)
             self.font_bold = settings.get("floating_font_bold", True)
-        
-        # Define Spotify-inspired color scheme
+
+        # Floating window background color (use theme color)
+        self.background_color = self.theme_colors.get("floating_bg", "#181818")
+
+        # Define Spotify-inspired color scheme as fallbacks
         SPOTIFY_BLACK = '#121212'
         SPOTIFY_DARK = '#181818'
         SPOTIFY_GRAY = '#282828'
@@ -45,14 +50,13 @@ class FloatingLyricsWindow:
         self.window.attributes('-topmost', True)
         self.window.attributes('-alpha', 0.0)  # Start fully transparent for fade-in effect
         # Load persisted window size (fallback to defaults)
-        _win_settings = read_translation_settings()
-        _init_w = int(_win_settings.get("floating_window_width", 800))
-        _init_h = int(_win_settings.get("floating_window_height", 200))
+        _init_w = int(settings.get("floating_window_width", 800))
+        _init_h = int(settings.get("floating_window_height", 200))
         self.window.geometry(f"{_init_w}x{_init_h}+100+100")  # Increased height to prevent text clipping
-        self.window.configure(bg=SPOTIFY_BLACK)
-        
+        self.window.configure(bg=self.background_color)
+
         # Add a subtle border
-        self.window.configure(highlightbackground=SPOTIFY_GREEN, highlightthickness=1)
+        self.window.configure(highlightbackground=self.theme_colors.get("floating_border", SPOTIFY_GREEN), highlightthickness=1)
         
         # Make window draggable and resizable
         self.x = 0
@@ -68,8 +72,8 @@ class FloatingLyricsWindow:
         self.start_height = 0
 
         # Create main frame with glassmorphic effect
-        main_frame = tk.Frame(self.window, bg=SPOTIFY_DARK, padx=25, pady=20)
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
+        self.main_frame = tk.Frame(self.window, bg=self.background_color, padx=25, pady=20)
+        self.main_frame.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
         
         # Bind mouse events for dragging and resizing
         # Bind to toplevel window and main frame to ensure events are captured
@@ -78,34 +82,34 @@ class FloatingLyricsWindow:
         self.window.bind('<ButtonRelease-1>', self.on_release)
         self.window.bind('<Motion>', self.on_motion)
         self.window.bind('<Leave>', lambda e: self.window.config(cursor=""))
-        
+
         # Also bind Motion to main frame and window to ensure cursor updates work over all widgets
-        main_frame.bind('<Motion>', self.on_motion)
-        main_frame.bind('<Button-1>', self.start_drag)
+        self.main_frame.bind('<Motion>', self.on_motion)
+        self.main_frame.bind('<Button-1>', self.start_drag)
         
         # Update wraplength when geometry changes (e.g., OS-driven resizes)
         self.window.bind('<Configure>', lambda e: self._update_wraplength(self.window.winfo_width()))
         
         # Add a subtle gradient effect using frames
-        gradient_frame = tk.Frame(main_frame, bg=SPOTIFY_BLACK, height=2)
-        gradient_frame.pack(fill=tk.X, pady=(0, 15))
+        self.gradient_frame = tk.Frame(self.main_frame, bg=self.background_color, height=2)
+        self.gradient_frame.pack(fill=tk.X, pady=(0, 15))
         
         # Song title and artist container
-        title_frame = tk.Frame(main_frame, bg=SPOTIFY_DARK)
-        title_frame.pack(fill=tk.X, pady=(0, 8))
+        self.title_frame = tk.Frame(self.main_frame, bg=self.background_color)
+        self.title_frame.pack(fill=tk.X, pady=(0, 8))
         # Bind Motion to title frame for cursor updates
-        title_frame.bind('<Motion>', self.on_motion)
-        title_frame.bind('<Button-1>', self.start_drag)
+        self.title_frame.bind('<Motion>', self.on_motion)
+        self.title_frame.bind('<Button-1>', self.start_drag)
 
         # Close button positioned near the top-right corner of the floating window
         self.close_button = tk.Button(
             self.window,
             text="✕",
             font=(self.selected_font, max(10, self.font_size - 2), 'normal'),
-            bg=SPOTIFY_DARK,
-            fg=SPOTIFY_LIGHT_GRAY,
-            activebackground=SPOTIFY_GRAY,
-            activeforeground=SPOTIFY_WHITE,
+            bg=self.theme_colors.get("floating_close_bg", self.background_color),
+            fg=self.theme_colors.get("floating_close_fg", SPOTIFY_LIGHT_GRAY),
+            activebackground=self.theme_colors.get("floating_close_bg", SPOTIFY_GRAY),
+            activeforeground=self.theme_colors.get("floating_close_fg", SPOTIFY_WHITE),
             bd=0,
             highlightthickness=0,
             padx=8,
@@ -125,11 +129,11 @@ class FloatingLyricsWindow:
 
         # Song title with modern typography
         self.song_label = tk.Label(
-            title_frame,
+            self.title_frame,
             text="No song playing",
             font=(self.selected_font, self.font_size, 'bold'),  # Song title always bold
-            bg=SPOTIFY_DARK,
-            fg=SPOTIFY_GREEN,
+            bg=self.background_color,
+            fg=self.theme_colors.get("floating_title_fg", SPOTIFY_GREEN),
             anchor='w'
         )
         self.song_label.pack(side=tk.LEFT)
@@ -139,11 +143,11 @@ class FloatingLyricsWindow:
 
         # Artist name with subtle styling (right-aligned)
         self.artist_label = tk.Label(
-            title_frame,
+            self.title_frame,
             text="",
             font=(self.selected_font, max(8, self.font_size - 2), artist_font_style),
-            bg=SPOTIFY_DARK,
-            fg=SPOTIFY_LIGHT_GRAY,
+            bg=self.background_color,
+            fg=self.theme_colors.get("floating_artist_fg", SPOTIFY_LIGHT_GRAY),
             anchor='e'
         )
         self.artist_label.pack(side=tk.RIGHT)
@@ -153,11 +157,11 @@ class FloatingLyricsWindow:
 
         # Original lyrics with larger font
         self.original_label = tk.Label(
-            main_frame,
+            self.main_frame,
             text="",
             font=(self.selected_font, self.font_size + 6, original_font_style),
-            bg=SPOTIFY_DARK,
-            fg=SPOTIFY_WHITE,
+            bg=self.background_color,
+            fg=self.theme_colors.get("floating_original_fg", SPOTIFY_WHITE),
             anchor='w',
             wraplength=750,
             justify='left'
@@ -169,11 +173,11 @@ class FloatingLyricsWindow:
 
         # Translated lyrics with styling
         self.translated_label = tk.Label(
-            main_frame,
+            self.main_frame,
             text="",
             font=(self.selected_font, self.font_size + 2, translated_font_style),
-            bg=SPOTIFY_DARK,
-            fg=SPOTIFY_WHITE,
+            bg=self.background_color,
+            fg=self.theme_colors.get("floating_translated_fg", SPOTIFY_WHITE),
             anchor='w',
             wraplength=750,
             justify='left'
@@ -188,6 +192,9 @@ class FloatingLyricsWindow:
 
         # Set initial wraplength based on window width
         self._update_wraplength(_init_w)
+
+        # Apply theme colors to all widgets
+        self.apply_colors()
 
         # Start fade-in animation
         self.fade_in()
@@ -500,26 +507,27 @@ class FloatingLyricsWindow:
     
     def _adjust_color_alpha(self, hex_color, alpha):
         """Adjust the alpha of a hex color by blending with background.
-        
+
         Args:
             hex_color: Hex color code
             alpha: Alpha value (0.0 to 1.0)
-            
+
         Returns:
             str: Adjusted hex color
         """
         # Convert hex to RGB
         hex_color = hex_color.lstrip('#')
         r, g, b = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
-        
-        # Background color (dark)
-        bg_r, bg_g, bg_b = 24, 24, 24  # SPOTIFY_DARK
-        
+
+        # Use actual floating background color for blending
+        bg_color = self.theme_colors.get("floating_bg", "#181818").lstrip('#')
+        bg_r, bg_g, bg_b = tuple(int(bg_color[i:i+2], 16) for i in (0, 2, 4))
+
         # Blend with background based on alpha
         r = int(r * alpha + bg_r * (1 - alpha))
         g = int(g * alpha + bg_g * (1 - alpha))
         b = int(b * alpha + bg_b * (1 - alpha))
-        
+
         # Convert back to hex
         return f'#{r:02x}{g:02x}{b:02x}'
 
@@ -617,6 +625,101 @@ class FloatingLyricsWindow:
             self.close_button.config(font=(font_name, max(10, font_size - 2), 'normal'))
         self.original_label.config(font=(font_name, font_size + 6, original_font_style))
         self.translated_label.config(font=(font_name, font_size + 2, translated_font_style))
+
+    def apply_colors(self):
+        """Apply all theme colors to the floating window."""
+        # Reload theme colors
+        self.theme_colors = get_theme_colors()
+        self.background_color = self.theme_colors.get("floating_bg", "#181818")
+
+        # Update window background and border
+        try:
+            self.window.configure(bg=self.background_color)
+            self.window.configure(highlightbackground=self.theme_colors.get("floating_border", "#1DB954"))
+        except Exception:
+            pass
+
+        # Update all widget backgrounds
+        background_widgets = [
+            getattr(self, 'main_frame', None),
+            getattr(self, 'gradient_frame', None),
+            getattr(self, 'title_frame', None),
+        ]
+
+        for widget in background_widgets:
+            if widget is None:
+                continue
+            try:
+                widget.configure(bg=self.background_color)
+            except Exception:
+                pass
+
+        # Update foreground colors for labels
+        try:
+            if hasattr(self, 'song_label') and self.song_label:
+                self.song_label.configure(
+                    bg=self.background_color,
+                    fg=self.theme_colors.get("floating_title_fg", "#1DB954")
+                )
+            if hasattr(self, 'artist_label') and self.artist_label:
+                self.artist_label.configure(
+                    bg=self.background_color,
+                    fg=self.theme_colors.get("floating_artist_fg", "#B3B3B3")
+                )
+            if hasattr(self, 'original_label') and self.original_label:
+                self.original_label.configure(
+                    bg=self.background_color,
+                    fg=self.theme_colors.get("floating_original_fg", "#FFFFFF")
+                )
+            if hasattr(self, 'translated_label') and self.translated_label:
+                self.translated_label.configure(
+                    bg=self.background_color,
+                    fg=self.theme_colors.get("floating_translated_fg", "#FFFFFF")
+                )
+            if hasattr(self, 'close_button') and self.close_button:
+                self.close_button.configure(
+                    bg=self.theme_colors.get("floating_close_bg", self.background_color),
+                    fg=self.theme_colors.get("floating_close_fg", "#B3B3B3"),
+                    activebackground=self.theme_colors.get("floating_close_bg", "#282828"),
+                    activeforeground=self.theme_colors.get("floating_close_fg", "#FFFFFF")
+                )
+        except Exception:
+            pass
+
+    def update_background_color(self, color: str):
+        """Update the floating window background color."""
+        # For backward compatibility, accept a direct color parameter
+        if color:
+            # If a specific color is provided, override the theme color temporarily
+            self.background_color = color
+        else:
+            # Otherwise reload from theme
+            self.apply_colors()
+            return
+
+        try:
+            self.window.configure(bg=self.background_color)
+        except Exception:
+            pass
+
+        widgets = [
+            getattr(self, 'main_frame', None),
+            getattr(self, 'gradient_frame', None),
+            getattr(self, 'title_frame', None),
+            getattr(self, 'song_label', None),
+            getattr(self, 'artist_label', None),
+            getattr(self, 'original_label', None),
+            getattr(self, 'translated_label', None),
+            getattr(self, 'close_button', None),
+        ]
+
+        for widget in widgets:
+            if widget is None:
+                continue
+            try:
+                widget.configure(bg=self.background_color)
+            except Exception:
+                pass
 
     def _save_window_size(self):
         """Persist the current floating window size to translation settings."""

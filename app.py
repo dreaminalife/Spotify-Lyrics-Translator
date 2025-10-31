@@ -16,6 +16,7 @@ from src.translation_settings import (
     read_translation_settings,
     save_translation_settings,
     read_models_config,
+    get_theme_colors,
 )
 from src.settings_window import SettingsWindow
 from src.font_manager import get_default_chinese_font
@@ -31,6 +32,9 @@ lyrics_manager = LyricsManager()
 
 # Lyrics providers and service (initialized after Spotify client)
 lyrics_service = None
+
+# Theme colors
+theme_colors = get_theme_colors()
 
 # Global state
 current_song_id = None
@@ -210,12 +214,14 @@ def open_settings_modal(prefill=None):
     def on_saved(values):
         init_spotify_client(values)
         init_translation_client()
-        # Refresh UI with new font
+        # Refresh UI with new font and theme colors
         refresh_ui_font()
-        # Update floating window fonts if it exists
+        refresh_theme_colors()
+        # Update floating window if it exists
         if floating_window and floating_window.is_open():
             font_name, font_size, is_bold = get_floating_font_settings()
             floating_window.update_font_settings(font_name, font_size, is_bold)
+            floating_window.apply_colors()
         # Force refresh lyrics after auth
         global current_song_id
         current_song_id = None
@@ -864,6 +870,8 @@ def refresh_ui_font():
     font_name, font_size, is_bold = get_font_settings()
     font_style = 'bold' if is_bold else 'normal'
 
+    refresh_theme_colors()
+
     # Update all UI elements with the new font settings
     unsynced_banner_label.config(font=(font_name, 11, font_style))
     icon_label.config(font=(font_name, 24, 'bold'))  # Icon stays bold
@@ -899,10 +907,146 @@ def refresh_ui_font():
 
     # Note: Floating window fonts are handled separately and not updated here
 
+
+def apply_theme_to_tree():
+    """Apply theme colors to the Treeview styles, tags, headings, and scrollbar."""
+    global theme_colors
+
+    # Get current font settings
+    font_name, font_size, is_bold = get_font_settings()
+    font_style = 'bold' if is_bold else 'normal'
+
+    # Configure Treeview style with theme colors
+    style.configure(
+        "Spotify.Treeview",
+        background=theme_colors.get("lyrics_table_bg", SPOTIFY_DARK),
+        foreground=theme_colors.get("lyrics_text_fg", SPOTIFY_WHITE),
+        fieldbackground=theme_colors.get("lyrics_table_bg", SPOTIFY_DARK),
+        borderwidth=0,
+        font=(font_name, font_size, font_style),
+        rowheight=max(35, font_size + 20)  # Adjust row height based on font size
+    )
+
+    # Configure Treeview heading style
+    style.configure(
+        "Spotify.Treeview.Heading",
+        background=theme_colors.get("lyrics_heading_bg", SPOTIFY_GRAY),
+        foreground=theme_colors.get("lyrics_heading_fg", SPOTIFY_WHITE),
+        font=(font_name, font_size, font_style),
+        borderwidth=0,
+        relief=tk.FLAT
+    )
+
+    # Configure selected row style with better highlighting
+    style.map(
+        "Spotify.Treeview",
+        background=[('selected', theme_colors.get("lyrics_selected_bg", SPOTIFY_GREEN))],
+        foreground=[('selected', theme_colors.get("lyrics_selected_fg", SPOTIFY_WHITE))]
+    )
+
+    # Add alternating row colors for better readability
+    tree.tag_configure('oddrow', background=theme_colors.get("lyrics_row_odd_bg", SPOTIFY_DARK))
+    tree.tag_configure('evenrow', background=theme_colors.get("lyrics_row_even_bg", SPOTIFY_GRAY))
+
+    # Add a special tag for the current playing line
+    tree.tag_configure('current', background=SPOTIFY_GREEN, foreground=SPOTIFY_WHITE)
+
+    # Add a tag for translated text to make it stand out
+    tree.tag_configure('translated', foreground=theme_colors.get("lyrics_text_fg", SPOTIFY_WHITE))
+
+    # Add a tag for highlighting newly translated lines
+    tree.tag_configure('highlight', background=SPOTIFY_GREEN, foreground=SPOTIFY_WHITE)
+
+    # Configure scrollbar style
+    style.configure(
+        "Spotify.Vertical.TScrollbar",
+        background=theme_colors.get("scrollbar_bg", SPOTIFY_GRAY),
+        troughcolor=theme_colors.get("scrollbar_trough", SPOTIFY_DARK),
+        bordercolor=theme_colors.get("scrollbar_border", SPOTIFY_DARK),
+        arrowcolor=theme_colors.get("scrollbar_arrow", SPOTIFY_LIGHT_GRAY),
+        darkcolor=theme_colors.get("scrollbar_bg", SPOTIFY_GRAY),
+        lightcolor=theme_colors.get("scrollbar_bg", SPOTIFY_GRAY)
+    )
+
+
+def refresh_theme_colors():
+    """Reload theme colors from settings and apply them to the main window."""
+    global theme_colors, MAIN_BG_COLOR
+
+    theme_colors = get_theme_colors()
+    MAIN_BG_COLOR = theme_colors.get("main_bg", SPOTIFY_BLACK)
+
+    try:
+        root.configure(bg=MAIN_BG_COLOR)
+    except Exception:
+        pass
+
+    # Apply panel background to main frames
+    panel_bg = theme_colors.get("panel_bg", SPOTIFY_DARK)
+    for widget in [control_frame, frame, unsynced_banner_label, status_label]:
+        try:
+            widget.configure(bg=MAIN_BG_COLOR)
+        except Exception:
+            pass
+
+    # Apply theme to header area
+    try:
+        header_frame.configure(bg=panel_bg)
+        title_frame.configure(bg=panel_bg)
+        song_info_frame.configure(bg=panel_bg)
+    except Exception:
+        pass
+
+    # Apply theme to header labels
+    accent_color = theme_colors.get("accent_primary", SPOTIFY_GREEN)
+    text_muted = theme_colors.get("text_muted", SPOTIFY_LIGHT_GRAY)
+    text_primary = theme_colors.get("text_primary", SPOTIFY_WHITE)
+
+    try:
+        icon_label.configure(fg=accent_color, bg=panel_bg)
+        app_title.configure(fg=text_primary, bg=panel_bg)
+        current_song_label.configure(fg=text_muted, bg=panel_bg)
+        current_time_label.configure(fg=accent_color, bg=panel_bg)
+    except Exception:
+        pass
+
+    # Apply theme to buttons
+    button_primary_bg = theme_colors.get("button_primary_bg", SPOTIFY_GREEN)
+    button_primary_fg = theme_colors.get("button_primary_fg", SPOTIFY_WHITE)
+    button_primary_hover = theme_colors.get("button_primary_hover", SPOTIFY_GREEN_HOVER)
+    button_secondary_bg = theme_colors.get("button_secondary_bg", SPOTIFY_GRAY)
+    button_secondary_fg = theme_colors.get("button_secondary_fg", SPOTIFY_WHITE)
+    button_secondary_hover = theme_colors.get("button_secondary_hover", SPOTIFY_LIGHT_GRAY)
+
+    try:
+        # Primary button (Show/Hide Floating Lyrics)
+        toggle_button.configure(
+            bg=button_primary_bg,
+            fg=button_primary_fg,
+            activebackground=theme_colors.get("button_primary_active", SPOTIFY_GREEN_ACTIVE)
+        )
+        # Update hover handlers
+        toggle_button.bind("<Enter>", lambda e: toggle_button.config(bg=button_primary_hover))
+        toggle_button.bind("<Leave>", lambda e: toggle_button.config(bg=button_primary_bg))
+
+        # Secondary button (Refresh Lyrics)
+        refresh_button.configure(
+            bg=button_secondary_bg,
+            fg=button_secondary_fg,
+            activebackground=theme_colors.get("button_secondary_active", SPOTIFY_LIGHT_GRAY)
+        )
+        # Update hover handlers
+        refresh_button.bind("<Enter>", lambda e: refresh_button.config(bg=button_secondary_hover))
+        refresh_button.bind("<Leave>", lambda e: refresh_button.config(bg=button_secondary_bg))
+    except Exception:
+        pass
+
+    # Apply theme to Treeview and related styles
+    apply_theme_to_tree()
 # Create main application window
 root = tk.Tk()
 root.title("Spotify Lyrics Translator")
-root.configure(bg='#121212')  # Spotify's dark background
+root.configure(bg=theme_colors.get("main_bg", "#121212"))  # Apply configurable background
 
 # Menubar with Settings
 menubar = tk.Menu(root)
@@ -932,16 +1076,18 @@ SPOTIFY_GREEN = '#1DB954'
 SPOTIFY_GREEN_HOVER = '#1ED760'
 SPOTIFY_GREEN_ACTIVE = '#1AA34A'
 
+MAIN_BG_COLOR = theme_colors.get("main_bg", SPOTIFY_BLACK)
+
 # Configure root background
-root.configure(bg=SPOTIFY_BLACK)
+root.configure(bg=MAIN_BG_COLOR)
 
 # Create header frame with app branding
-header_frame = tk.Frame(root, bg=SPOTIFY_DARK, height=80)
+header_frame = tk.Frame(root, bg=theme_colors.get("panel_bg", SPOTIFY_DARK), height=80)
 header_frame.pack(fill=tk.X, padx=0, pady=0)
 header_frame.pack_propagate(False)  # Prevent frame from shrinking
 
 # App title and logo area
-title_frame = tk.Frame(header_frame, bg=SPOTIFY_DARK)
+title_frame = tk.Frame(header_frame, bg=theme_colors.get("panel_bg", SPOTIFY_DARK))
 title_frame.pack(side=tk.LEFT, padx=20, pady=15)
 
 # Spotify-like icon (using text representation)
@@ -949,8 +1095,8 @@ icon_label = tk.Label(
     title_frame,
     text="♪",
     font=(get_selected_font(), 24, 'bold'),
-    fg=SPOTIFY_GREEN,
-    bg=SPOTIFY_DARK
+    fg=theme_colors.get("accent_primary", SPOTIFY_GREEN),
+    bg=theme_colors.get("panel_bg", SPOTIFY_DARK)
 )
 icon_label.pack(side=tk.LEFT, padx=(0, 10))
 
@@ -958,13 +1104,13 @@ app_title = tk.Label(
     title_frame,
     text="Lyrics Translator",
     font=(get_selected_font(), 20, 'bold'),
-    fg=SPOTIFY_WHITE,
-    bg=SPOTIFY_DARK
+    fg=theme_colors.get("text_primary", SPOTIFY_WHITE),
+    bg=theme_colors.get("panel_bg", SPOTIFY_DARK)
 )
 app_title.pack(side=tk.LEFT)
 
 # Current song info frame - positioned on the right side
-song_info_frame = tk.Frame(header_frame, bg=SPOTIFY_DARK)
+song_info_frame = tk.Frame(header_frame, bg=theme_colors.get("panel_bg", SPOTIFY_DARK))
 song_info_frame.pack(side=tk.RIGHT, padx=(0, 20), pady=15, anchor='e')
 
 # Current song label as Label - right-aligned to stick to right border
@@ -974,8 +1120,8 @@ current_song_label = tk.Label(
     song_info_frame,
     textvariable=current_song_var,
     font=(get_selected_font(), 14, 'bold'),
-    fg=SPOTIFY_LIGHT_GRAY,
-    bg=SPOTIFY_DARK,
+    fg=theme_colors.get("text_muted", SPOTIFY_LIGHT_GRAY),
+    bg=theme_colors.get("panel_bg", SPOTIFY_DARK),
     anchor='e',  # Right-align the text
     justify='right'
 )
@@ -986,14 +1132,14 @@ current_time_label = tk.Label(
     song_info_frame,
     text="0:00",
     font=(get_selected_font(), 12, 'bold'),
-    fg=SPOTIFY_GREEN,
-    bg=SPOTIFY_DARK,
+    fg=theme_colors.get("accent_primary", SPOTIFY_GREEN),
+    bg=theme_colors.get("panel_bg", SPOTIFY_DARK),
     anchor='e'  # Right-align the time as well
 )
 current_time_label.pack(anchor='e')
 
 # Control panel frame
-control_frame = tk.Frame(root, bg=SPOTIFY_BLACK, height=60)
+control_frame = tk.Frame(root, bg=MAIN_BG_COLOR, height=60)
 control_frame.pack(fill=tk.X, padx=20, pady=10)
 
 # Unsynced banner (initially hidden)
@@ -1001,7 +1147,7 @@ unsynced_banner_label = tk.Label(
     control_frame,
     text="Lyrics are not time-synced.",
     fg=SPOTIFY_LIGHT_GRAY,
-    bg=SPOTIFY_BLACK,
+    bg=MAIN_BG_COLOR,
     font=(get_selected_font(), 11, 'bold')
 )
 unsynced_banner_label._packed = False
@@ -1011,10 +1157,10 @@ toggle_button = tk.Button(
     control_frame,
     text="Show Floating Lyrics",
     font=(get_selected_font(), 12, 'bold'),
-    fg=SPOTIFY_WHITE,
-    bg=SPOTIFY_GREEN,
-    activebackground=SPOTIFY_GREEN_ACTIVE,
-    activeforeground=SPOTIFY_WHITE,
+    fg=theme_colors.get("button_primary_fg", SPOTIFY_WHITE),
+    bg=theme_colors.get("button_primary_bg", SPOTIFY_GREEN),
+    activebackground=theme_colors.get("button_primary_active", SPOTIFY_GREEN_ACTIVE),
+    activeforeground=theme_colors.get("button_primary_fg", SPOTIFY_WHITE),
     bd=0,
     padx=20,
     pady=8,
@@ -1024,15 +1170,7 @@ toggle_button = tk.Button(
 )
 toggle_button.pack(side=tk.LEFT, padx=(0, 10))
 
-# Add hover effect for button
-def on_button_enter(e):
-    toggle_button.config(bg=SPOTIFY_GREEN_HOVER)
-
-def on_button_leave(e):
-    toggle_button.config(bg=SPOTIFY_GREEN)
-
-toggle_button.bind("<Enter>", on_button_enter)
-toggle_button.bind("<Leave>", on_button_leave)
+# Hover effects will be set by refresh_theme_colors()
 
 # Add a refresh button to manually refresh lyrics
 def refresh_lyrics():
@@ -1058,10 +1196,10 @@ refresh_button = tk.Button(
     control_frame,
     text="Refresh Lyrics",
     font=(get_selected_font(), 12, 'bold'),
-    fg=SPOTIFY_WHITE,
-    bg=SPOTIFY_GRAY,
-    activebackground=SPOTIFY_LIGHT_GRAY,
-    activeforeground=SPOTIFY_BLACK,
+    fg=theme_colors.get("button_secondary_fg", SPOTIFY_WHITE),
+    bg=theme_colors.get("button_secondary_bg", SPOTIFY_GRAY),
+    activebackground=theme_colors.get("button_secondary_active", SPOTIFY_LIGHT_GRAY),
+    activeforeground=theme_colors.get("button_secondary_fg", SPOTIFY_WHITE),
     bd=0,
     padx=20,
     pady=8,
@@ -1071,15 +1209,7 @@ refresh_button = tk.Button(
 )
 refresh_button.pack(side=tk.LEFT, padx=(0, 10))
 
-# Add hover effect for refresh button
-def on_refresh_enter(e):
-    refresh_button.config(bg=SPOTIFY_LIGHT_GRAY, fg=SPOTIFY_BLACK)
-
-def on_refresh_leave(e):
-    refresh_button.config(bg=SPOTIFY_GRAY, fg=SPOTIFY_WHITE)
-
-refresh_button.bind("<Enter>", on_refresh_enter)
-refresh_button.bind("<Leave>", on_refresh_leave)
+# Hover effects will be set by refresh_theme_colors()
 
 # Add a status label to show translation status
 status_label = tk.Label(
@@ -1087,12 +1217,12 @@ status_label = tk.Label(
     text="Ready",
     font=(get_selected_font(), 11, 'bold'),
     fg=SPOTIFY_LIGHT_GRAY,
-    bg=SPOTIFY_BLACK
+    bg=MAIN_BG_COLOR
 )
 status_label.pack(side=tk.RIGHT, padx=(10, 0))
 
 # Create a frame to hold the Treeview and Scrollbar with modern styling
-frame = tk.Frame(root, bg=SPOTIFY_BLACK)
+frame = tk.Frame(root, bg=MAIN_BG_COLOR)
 frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 20))
 
 # Create and configure the treeview widget with modern styling
@@ -1102,34 +1232,6 @@ tree = ttk.Treeview(
     show="headings",
     style="Spotify.Treeview",
     selectmode="extended"
-)
-
-# Configure Treeview style with Spotify-inspired colors
-style.configure(
-    "Spotify.Treeview",
-    background=SPOTIFY_DARK,
-    foreground=SPOTIFY_WHITE,
-    fieldbackground=SPOTIFY_DARK,
-    borderwidth=0,
-    font=(get_selected_font(), 12, 'bold'),
-    rowheight=35
-)
-
-# Configure Treeview heading style
-style.configure(
-    "Spotify.Treeview.Heading",
-    background=SPOTIFY_GRAY,
-    foreground=SPOTIFY_WHITE,
-    font=(get_selected_font(), 12, 'bold'),
-    borderwidth=0,
-    relief=tk.FLAT
-)
-
-# Configure selected row style with better highlighting
-style.map(
-    "Spotify.Treeview",
-    background=[('selected', SPOTIFY_GREEN)],
-    foreground=[('selected', SPOTIFY_WHITE)]
 )
 
 # Configure headings with proper padding
@@ -1143,36 +1245,12 @@ tree.column("Time", width=100, minwidth=80, anchor='w')
 tree.column("Original Lyrics", width=450, minwidth=200, anchor='w')
 tree.column("Translated Lyrics", width=450, minwidth=200, anchor='w')
 
-# Add alternating row colors for better readability
-tree.tag_configure('oddrow', background=SPOTIFY_DARK)
-tree.tag_configure('evenrow', background=SPOTIFY_GRAY)
-
-# Add a special tag for the current playing line
-tree.tag_configure('current', background=SPOTIFY_GREEN, foreground=SPOTIFY_WHITE)
-
-# Add a tag for translated text to make it stand out
-tree.tag_configure('translated', foreground=SPOTIFY_WHITE)
-
-# Add a tag for highlighting newly translated lines
-tree.tag_configure('highlight', background=SPOTIFY_GREEN, foreground=SPOTIFY_WHITE)
-
 # Create custom scrollbar with modern styling
 scrollbar = ttk.Scrollbar(
     frame,
     orient="vertical",
     command=tree.yview,
     style="Spotify.Vertical.TScrollbar"
-)
-
-# Configure scrollbar style
-style.configure(
-    "Spotify.Vertical.TScrollbar",
-    background=SPOTIFY_GRAY,
-    troughcolor=SPOTIFY_DARK,
-    bordercolor=SPOTIFY_DARK,
-    arrowcolor=SPOTIFY_LIGHT_GRAY,
-    darkcolor=SPOTIFY_GRAY,
-    lightcolor=SPOTIFY_GRAY
 )
 
 # Connect the scrollbar to the treeview

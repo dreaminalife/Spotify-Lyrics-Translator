@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, colorchooser
 from typing import Callable, Dict, Optional
 
 from .settings_manager import read_secrets, save_secrets, validate_secrets
@@ -471,7 +471,7 @@ class SettingsWindow(tk.Toplevel):
             # Save translation settings
             selected_display = model_display_var.get()
             selected_model_id = self._model_display_to_id.get(selected_display, selected_display)
-            save_translation_settings({
+            translation_settings = {
                 "provider": provider_var.get(),
                 "selected_model": selected_model_id,
                 "target_language": target_lang_var.get().strip() or "en",
@@ -482,7 +482,68 @@ class SettingsWindow(tk.Toplevel):
                 "floating_font": floating_font_var.get(),
                 "floating_font_size": floating_font_size_var.get(),
                 "floating_font_bold": floating_font_bold_var.get(),
-            })
+            }
+            
+            # Add theme colors if Appearance tab variables exist
+            if hasattr(self, 'theme_vars'):
+                theme_colors_dict = {
+                    # Global & Text
+                    "accent_primary": self.theme_vars["accent_primary"].get(),
+                    "accent_hover": self.theme_vars["accent_hover"].get(),
+                    "accent_active": self.theme_vars["accent_active"].get(),
+                    "text_primary": self.theme_vars["text_primary"].get(),
+                    "text_muted": self.theme_vars["text_muted"].get(),
+                    "text_inverse": self.theme_vars["text_inverse"].get(),
+                    # Windows & Panels
+                    "main_bg": self.theme_vars["main_bg"].get(),
+                    "panel_bg": self.theme_vars["panel_bg"].get(),
+                    "frame_bg": self.theme_vars["frame_bg"].get(),
+                    "main_bg_color": self.theme_vars["main_bg"].get(),  # Backward compatibility
+                    # Inputs
+                    "entry_bg": self.theme_vars["entry_bg"].get(),
+                    "entry_fg": self.theme_vars["entry_fg"].get(),
+                    "entry_caret": self.theme_vars["entry_caret"].get(),
+                    # Buttons
+                    "button_primary_bg": self.theme_vars["button_primary_bg"].get(),
+                    "button_primary_fg": self.theme_vars["button_primary_fg"].get(),
+                    "button_primary_hover": self.theme_vars["button_primary_hover"].get(),
+                    "button_primary_active": self.theme_vars["button_primary_active"].get(),
+                    "button_secondary_bg": self.theme_vars["button_secondary_bg"].get(),
+                    "button_secondary_fg": self.theme_vars["button_secondary_fg"].get(),
+                    "button_secondary_hover": self.theme_vars["button_secondary_hover"].get(),
+                    "button_secondary_active": self.theme_vars["button_secondary_active"].get(),
+                    # Lyrics Table
+                    "lyrics_table_bg": self.theme_vars["lyrics_table_bg"].get(),
+                    "lyrics_row_odd_bg": self.theme_vars["lyrics_row_odd_bg"].get(),
+                    "lyrics_row_even_bg": self.theme_vars["lyrics_row_even_bg"].get(),
+                    "lyrics_heading_bg": self.theme_vars["lyrics_heading_bg"].get(),
+                    "lyrics_heading_fg": self.theme_vars["lyrics_heading_fg"].get(),
+                    "lyrics_selected_bg": self.theme_vars["lyrics_selected_bg"].get(),
+                    "lyrics_selected_fg": self.theme_vars["lyrics_selected_fg"].get(),
+                    "lyrics_text_fg": self.theme_vars["lyrics_text_fg"].get(),
+                    # Scrollbar
+                    "scrollbar_bg": self.theme_vars["scrollbar_bg"].get(),
+                    "scrollbar_trough": self.theme_vars["scrollbar_trough"].get(),
+                    "scrollbar_arrow": self.theme_vars["scrollbar_arrow"].get(),
+                    "scrollbar_border": self.theme_vars["scrollbar_border"].get(),
+                    # Floating Window
+                    "floating_bg": self.theme_vars["floating_bg"].get(),
+                    "floating_border": self.theme_vars["floating_border"].get(),
+                    "floating_title_fg": self.theme_vars["floating_title_fg"].get(),
+                    "floating_artist_fg": self.theme_vars["floating_artist_fg"].get(),
+                    "floating_original_fg": self.theme_vars["floating_original_fg"].get(),
+                    "floating_translated_fg": self.theme_vars["floating_translated_fg"].get(),
+                    "floating_close_bg": self.theme_vars["floating_close_bg"].get(),
+                    "floating_close_fg": self.theme_vars["floating_close_fg"].get(),
+                    "floating_bg_color": self.theme_vars["floating_bg"].get(),  # Backward compatibility
+                }
+                translation_settings.update(theme_colors_dict)
+            else:
+                # Fallback to old keys if theme_vars not initialized
+                translation_settings["main_bg_color"] = tsettings.get("main_bg_color", "#121212")
+                translation_settings["floating_bg_color"] = tsettings.get("floating_bg_color", "#181818")
+            
+            save_translation_settings(translation_settings)
 
             # Save model body
             import json
@@ -687,6 +748,367 @@ class SettingsWindow(tk.Toplevel):
         floating_font_bold_var.trace_add("write", update_floating_preview)
 
         tab_font.grid_columnconfigure(1, weight=1)
+
+        # Appearance Tab
+        tab_appearance = tk.Frame(notebook, bg=self.theme["panel"])
+        notebook.add(tab_appearance, text="Appearance")
+
+        # Create scrollable frame for appearance settings
+        canvas = tk.Canvas(tab_appearance, bg=self.theme["panel"], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(tab_appearance, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=self.theme["panel"], padx=20, pady=20)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        canvas.bind("<MouseWheel>", _on_mousewheel)
+        scrollable_frame.bind("<MouseWheel>", _on_mousewheel)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        def _normalize_hex(value: str, fallback: str) -> str:
+            value = (value or "").strip()
+            if not value:
+                return fallback
+            if not value.startswith("#"):
+                value = f"#{value}"
+            if len(value) == 4:
+                value = f"#{value[1]*2}{value[2]*2}{value[3]*2}"
+            if len(value) != 7:
+                return fallback
+            return value.upper()
+
+        def _get_theme_value(key: str, default: str) -> str:
+            """Get theme value with fallback to old keys for backward compatibility."""
+            value = tsettings.get(key, default)
+            if key == "main_bg" and value == default:
+                value = tsettings.get("main_bg_color", default)
+            elif key == "floating_bg" and value == default:
+                value = tsettings.get("floating_bg_color", default)
+            return _normalize_hex(value, default)
+
+        # Theme color variables
+        # Global & Text
+        accent_primary_var = tk.StringVar(value=_get_theme_value("accent_primary", "#1DB954"))
+        accent_hover_var = tk.StringVar(value=_get_theme_value("accent_hover", "#1ED760"))
+        accent_active_var = tk.StringVar(value=_get_theme_value("accent_active", "#1AA34A"))
+        text_primary_var = tk.StringVar(value=_get_theme_value("text_primary", "#FFFFFF"))
+        text_muted_var = tk.StringVar(value=_get_theme_value("text_muted", "#B3B3B3"))
+        text_inverse_var = tk.StringVar(value=_get_theme_value("text_inverse", "#121212"))
+        # Windows & Panels
+        main_bg_var = tk.StringVar(value=_get_theme_value("main_bg", "#121212"))
+        panel_bg_var = tk.StringVar(value=_get_theme_value("panel_bg", "#181818"))
+        frame_bg_var = tk.StringVar(value=_get_theme_value("frame_bg", "#121212"))
+        # Inputs
+        entry_bg_var = tk.StringVar(value=_get_theme_value("entry_bg", "#282828"))
+        entry_fg_var = tk.StringVar(value=_get_theme_value("entry_fg", "#FFFFFF"))
+        entry_caret_var = tk.StringVar(value=_get_theme_value("entry_caret", "#FFFFFF"))
+        # Buttons
+        button_primary_bg_var = tk.StringVar(value=_get_theme_value("button_primary_bg", "#1DB954"))
+        button_primary_fg_var = tk.StringVar(value=_get_theme_value("button_primary_fg", "#FFFFFF"))
+        button_primary_hover_var = tk.StringVar(value=_get_theme_value("button_primary_hover", "#1ED760"))
+        button_primary_active_var = tk.StringVar(value=_get_theme_value("button_primary_active", "#1AA34A"))
+        button_secondary_bg_var = tk.StringVar(value=_get_theme_value("button_secondary_bg", "#282828"))
+        button_secondary_fg_var = tk.StringVar(value=_get_theme_value("button_secondary_fg", "#FFFFFF"))
+        button_secondary_hover_var = tk.StringVar(value=_get_theme_value("button_secondary_hover", "#B3B3B3"))
+        button_secondary_active_var = tk.StringVar(value=_get_theme_value("button_secondary_active", "#B3B3B3"))
+        # Lyrics Table
+        lyrics_table_bg_var = tk.StringVar(value=_get_theme_value("lyrics_table_bg", "#181818"))
+        lyrics_row_odd_bg_var = tk.StringVar(value=_get_theme_value("lyrics_row_odd_bg", "#181818"))
+        lyrics_row_even_bg_var = tk.StringVar(value=_get_theme_value("lyrics_row_even_bg", "#282828"))
+        lyrics_heading_bg_var = tk.StringVar(value=_get_theme_value("lyrics_heading_bg", "#282828"))
+        lyrics_heading_fg_var = tk.StringVar(value=_get_theme_value("lyrics_heading_fg", "#FFFFFF"))
+        lyrics_selected_bg_var = tk.StringVar(value=_get_theme_value("lyrics_selected_bg", "#1DB954"))
+        lyrics_selected_fg_var = tk.StringVar(value=_get_theme_value("lyrics_selected_fg", "#FFFFFF"))
+        lyrics_text_fg_var = tk.StringVar(value=_get_theme_value("lyrics_text_fg", "#FFFFFF"))
+        # Scrollbar
+        scrollbar_bg_var = tk.StringVar(value=_get_theme_value("scrollbar_bg", "#282828"))
+        scrollbar_trough_var = tk.StringVar(value=_get_theme_value("scrollbar_trough", "#181818"))
+        scrollbar_arrow_var = tk.StringVar(value=_get_theme_value("scrollbar_arrow", "#B3B3B3"))
+        scrollbar_border_var = tk.StringVar(value=_get_theme_value("scrollbar_border", "#181818"))
+        # Floating Window
+        floating_bg_var = tk.StringVar(value=_get_theme_value("floating_bg", "#181818"))
+        floating_border_var = tk.StringVar(value=_get_theme_value("floating_border", "#1DB954"))
+        floating_title_fg_var = tk.StringVar(value=_get_theme_value("floating_title_fg", "#1DB954"))
+        floating_artist_fg_var = tk.StringVar(value=_get_theme_value("floating_artist_fg", "#B3B3B3"))
+        floating_original_fg_var = tk.StringVar(value=_get_theme_value("floating_original_fg", "#FFFFFF"))
+        floating_translated_fg_var = tk.StringVar(value=_get_theme_value("floating_translated_fg", "#FFFFFF"))
+        floating_close_bg_var = tk.StringVar(value=_get_theme_value("floating_close_bg", "#181818"))
+        floating_close_fg_var = tk.StringVar(value=_get_theme_value("floating_close_fg", "#B3B3B3"))
+        
+        # Store theme variables for access in save function
+        self.theme_vars = {
+            "accent_primary": accent_primary_var,
+            "accent_hover": accent_hover_var,
+            "accent_active": accent_active_var,
+            "text_primary": text_primary_var,
+            "text_muted": text_muted_var,
+            "text_inverse": text_inverse_var,
+            "main_bg": main_bg_var,
+            "panel_bg": panel_bg_var,
+            "frame_bg": frame_bg_var,
+            "entry_bg": entry_bg_var,
+            "entry_fg": entry_fg_var,
+            "entry_caret": entry_caret_var,
+            "button_primary_bg": button_primary_bg_var,
+            "button_primary_fg": button_primary_fg_var,
+            "button_primary_hover": button_primary_hover_var,
+            "button_primary_active": button_primary_active_var,
+            "button_secondary_bg": button_secondary_bg_var,
+            "button_secondary_fg": button_secondary_fg_var,
+            "button_secondary_hover": button_secondary_hover_var,
+            "button_secondary_active": button_secondary_active_var,
+            "lyrics_table_bg": lyrics_table_bg_var,
+            "lyrics_row_odd_bg": lyrics_row_odd_bg_var,
+            "lyrics_row_even_bg": lyrics_row_even_bg_var,
+            "lyrics_heading_bg": lyrics_heading_bg_var,
+            "lyrics_heading_fg": lyrics_heading_fg_var,
+            "lyrics_selected_bg": lyrics_selected_bg_var,
+            "lyrics_selected_fg": lyrics_selected_fg_var,
+            "lyrics_text_fg": lyrics_text_fg_var,
+            "scrollbar_bg": scrollbar_bg_var,
+            "scrollbar_trough": scrollbar_trough_var,
+            "scrollbar_arrow": scrollbar_arrow_var,
+            "scrollbar_border": scrollbar_border_var,
+            "floating_bg": floating_bg_var,
+            "floating_border": floating_border_var,
+            "floating_title_fg": floating_title_fg_var,
+            "floating_artist_fg": floating_artist_fg_var,
+            "floating_original_fg": floating_original_fg_var,
+            "floating_translated_fg": floating_translated_fg_var,
+            "floating_close_bg": floating_close_bg_var,
+            "floating_close_fg": floating_close_fg_var,
+        }
+
+        def _choose_color(var: tk.StringVar, default: str):
+            try:
+                initial = _normalize_hex(var.get(), default)
+                rgb, hex_value = colorchooser.askcolor(color=initial, parent=self)
+            except Exception:
+                rgb, hex_value = None, None
+            if hex_value:
+                var.set(_normalize_hex(hex_value, default))
+
+        def _build_color_row(row: int, label_text: str, var: tk.StringVar, default: str):
+            tk.Label(
+                scrollable_frame,
+                text=label_text,
+                bg=self.theme["panel"],
+                fg=self.theme["label_fg"],
+                font=(get_selected_font(), 10, 'normal')
+            ).grid(row=row, column=0, sticky="w", pady=(0, 6))
+
+            entry = tk.Entry(
+                scrollable_frame,
+                textvariable=var,
+                state="readonly",
+                justify="center",
+                width=12,
+                bg=self.theme["entry_bg"],
+                fg=self.theme["entry_fg"],
+                readonlybackground=self.theme["entry_bg"],
+                relief=tk.FLAT
+            )
+            entry.grid(row=row, column=1, sticky="w", pady=(0, 6))
+
+            swatch = tk.Label(
+                scrollable_frame,
+                width=4,
+                height=1,
+                bg=_normalize_hex(var.get(), default),
+                relief=tk.SOLID,
+                bd=1
+            )
+            swatch.grid(row=row, column=2, padx=(12, 12), pady=(0, 6))
+
+            tk.Button(
+                scrollable_frame,
+                text="Choose…",
+                command=lambda: _choose_color(var, default),
+                bg=self.theme["button_bg"],
+                fg=self.theme["button_fg"],
+                relief=tk.FLAT,
+                padx=8,
+                pady=6,
+                cursor="hand2",
+                font=(get_selected_font(), 10, 'normal')
+            ).grid(row=row, column=3, sticky="w", pady=(0, 6))
+
+            tk.Button(
+                scrollable_frame,
+                text="Reset",
+                command=lambda: var.set(_normalize_hex(default, default)),
+                bg=self.theme["button_bg"],
+                fg=self.theme["button_fg"],
+                relief=tk.FLAT,
+                padx=8,
+                pady=6,
+                cursor="hand2",
+                font=(get_selected_font(), 10, 'normal')
+            ).grid(row=row, column=4, sticky="w", pady=(0, 6))
+
+            def _on_var_change(*_):
+                normalized = _normalize_hex(var.get(), default)
+                swatch.configure(bg=normalized)
+
+            _on_var_change()
+            var.trace_add("write", _on_var_change)
+
+            return row + 1
+
+        def _add_section_header(row: int, title: str):
+            header = tk.Label(
+                scrollable_frame,
+                text=title,
+                bg=self.theme["panel"],
+                fg=self.theme["label_fg"],
+                font=(get_selected_font(), 12, 'bold')
+            )
+            header.grid(row=row, column=0, columnspan=5, sticky="w", pady=(10, 5))
+            return row + 1
+
+        def _add_separator(row: int):
+            sep = ttk.Separator(scrollable_frame, orient='horizontal')
+            sep.grid(row=row, column=0, columnspan=5, sticky='ew', pady=(10, 5))
+            return row + 1
+
+        # Build color picker rows
+        row = 0
+        row = _add_section_header(row, "Global & Text Colors")
+        row = _build_color_row(row, "Accent Primary", accent_primary_var, "#1DB954")
+        row = _build_color_row(row, "Accent Hover", accent_hover_var, "#1ED760")
+        row = _build_color_row(row, "Accent Active", accent_active_var, "#1AA34A")
+        row = _build_color_row(row, "Text Primary", text_primary_var, "#FFFFFF")
+        row = _build_color_row(row, "Text Muted", text_muted_var, "#B3B3B3")
+        row = _build_color_row(row, "Text Inverse", text_inverse_var, "#121212")
+        row = _add_separator(row)
+        
+        row = _add_section_header(row, "Windows & Panels")
+        row = _build_color_row(row, "Main Background", main_bg_var, "#121212")
+        row = _build_color_row(row, "Panel Background", panel_bg_var, "#181818")
+        row = _build_color_row(row, "Frame Background", frame_bg_var, "#121212")
+        row = _add_separator(row)
+        
+        row = _add_section_header(row, "Input Fields")
+        row = _build_color_row(row, "Entry Background", entry_bg_var, "#282828")
+        row = _build_color_row(row, "Entry Foreground", entry_fg_var, "#FFFFFF")
+        row = _build_color_row(row, "Entry Caret", entry_caret_var, "#FFFFFF")
+        row = _add_separator(row)
+        
+        row = _add_section_header(row, "Buttons")
+        row = _build_color_row(row, "Primary Button BG", button_primary_bg_var, "#1DB954")
+        row = _build_color_row(row, "Primary Button FG", button_primary_fg_var, "#FFFFFF")
+        row = _build_color_row(row, "Primary Button Hover", button_primary_hover_var, "#1ED760")
+        row = _build_color_row(row, "Primary Button Active", button_primary_active_var, "#1AA34A")
+        row = _build_color_row(row, "Secondary Button BG", button_secondary_bg_var, "#282828")
+        row = _build_color_row(row, "Secondary Button FG", button_secondary_fg_var, "#FFFFFF")
+        row = _build_color_row(row, "Secondary Button Hover", button_secondary_hover_var, "#B3B3B3")
+        row = _build_color_row(row, "Secondary Button Active", button_secondary_active_var, "#B3B3B3")
+        row = _add_separator(row)
+        
+        row = _add_section_header(row, "Lyrics Table (Treeview)")
+        row = _build_color_row(row, "Table Background", lyrics_table_bg_var, "#181818")
+        row = _build_color_row(row, "Odd Row Background", lyrics_row_odd_bg_var, "#181818")
+        row = _build_color_row(row, "Even Row Background", lyrics_row_even_bg_var, "#282828")
+        row = _build_color_row(row, "Heading Background", lyrics_heading_bg_var, "#282828")
+        row = _build_color_row(row, "Heading Foreground", lyrics_heading_fg_var, "#FFFFFF")
+        row = _build_color_row(row, "Selected Background", lyrics_selected_bg_var, "#1DB954")
+        row = _build_color_row(row, "Selected Foreground", lyrics_selected_fg_var, "#FFFFFF")
+        row = _build_color_row(row, "Lyrics Text Foreground", lyrics_text_fg_var, "#FFFFFF")
+        row = _add_separator(row)
+        
+        row = _add_section_header(row, "Scrollbar")
+        row = _build_color_row(row, "Scrollbar Background", scrollbar_bg_var, "#282828")
+        row = _build_color_row(row, "Scrollbar Trough", scrollbar_trough_var, "#181818")
+        row = _build_color_row(row, "Scrollbar Arrow", scrollbar_arrow_var, "#B3B3B3")
+        row = _build_color_row(row, "Scrollbar Border", scrollbar_border_var, "#181818")
+        row = _add_separator(row)
+        
+        row = _add_section_header(row, "Floating Window")
+        row = _build_color_row(row, "Floating Background", floating_bg_var, "#181818")
+        row = _build_color_row(row, "Floating Border", floating_border_var, "#1DB954")
+        row = _build_color_row(row, "Title Foreground", floating_title_fg_var, "#1DB954")
+        row = _build_color_row(row, "Artist Foreground", floating_artist_fg_var, "#B3B3B3")
+        row = _build_color_row(row, "Original Text Foreground", floating_original_fg_var, "#FFFFFF")
+        row = _build_color_row(row, "Translated Text Foreground", floating_translated_fg_var, "#FFFFFF")
+        row = _build_color_row(row, "Close Button BG", floating_close_bg_var, "#181818")
+        row = _build_color_row(row, "Close Button FG", floating_close_fg_var, "#B3B3B3")
+
+        def _reset_colors():
+            # Global & Text
+            accent_primary_var.set("#1DB954")
+            accent_hover_var.set("#1ED760")
+            accent_active_var.set("#1AA34A")
+            text_primary_var.set("#FFFFFF")
+            text_muted_var.set("#B3B3B3")
+            text_inverse_var.set("#121212")
+            # Windows & Panels
+            main_bg_var.set("#121212")
+            panel_bg_var.set("#181818")
+            frame_bg_var.set("#121212")
+            # Inputs
+            entry_bg_var.set("#282828")
+            entry_fg_var.set("#FFFFFF")
+            entry_caret_var.set("#FFFFFF")
+            # Buttons
+            button_primary_bg_var.set("#1DB954")
+            button_primary_fg_var.set("#FFFFFF")
+            button_primary_hover_var.set("#1ED760")
+            button_primary_active_var.set("#1AA34A")
+            button_secondary_bg_var.set("#282828")
+            button_secondary_fg_var.set("#FFFFFF")
+            button_secondary_hover_var.set("#B3B3B3")
+            button_secondary_active_var.set("#B3B3B3")
+            # Lyrics Table
+            lyrics_table_bg_var.set("#181818")
+            lyrics_row_odd_bg_var.set("#181818")
+            lyrics_row_even_bg_var.set("#282828")
+            lyrics_heading_bg_var.set("#282828")
+            lyrics_heading_fg_var.set("#FFFFFF")
+            lyrics_selected_bg_var.set("#1DB954")
+            lyrics_selected_fg_var.set("#FFFFFF")
+            lyrics_text_fg_var.set("#FFFFFF")
+            # Scrollbar
+            scrollbar_bg_var.set("#282828")
+            scrollbar_trough_var.set("#181818")
+            scrollbar_arrow_var.set("#B3B3B3")
+            scrollbar_border_var.set("#181818")
+            # Floating Window
+            floating_bg_var.set("#181818")
+            floating_border_var.set("#1DB954")
+            floating_title_fg_var.set("#1DB954")
+            floating_artist_fg_var.set("#B3B3B3")
+            floating_original_fg_var.set("#FFFFFF")
+            floating_translated_fg_var.set("#FFFFFF")
+            floating_close_bg_var.set("#181818")
+            floating_close_fg_var.set("#B3B3B3")
+
+        reset_btn = tk.Button(
+            scrollable_frame,
+            text="Reset to Spotify Defaults",
+            command=_reset_colors,
+            bg=self.theme["accent"],
+            fg=self.theme["button_fg"],
+            activebackground=self.theme["accent_active"],
+            relief=tk.FLAT,
+            padx=16,
+            pady=8,
+            cursor="hand2",
+            font=(get_selected_font(), 10, 'normal')
+        )
+        reset_btn.grid(row=row, column=0, columnspan=5, sticky="w", pady=(12, 0))
+
+        scrollable_frame.grid_columnconfigure(3, weight=0)
+        scrollable_frame.grid_columnconfigure(4, weight=0)
 
         # Footer buttons shared (Cancel/Save All)
         footer = tk.Frame(self, bg=self.theme["panel"]) 
