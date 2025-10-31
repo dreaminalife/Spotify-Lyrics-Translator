@@ -103,13 +103,15 @@ class SettingsWindow(tk.Toplevel):
 
         # OpenRouter API key
         openrouter_key_var = tk.StringVar(value=current.get("openrouter_api_key", ""))
-        tk.Label(tab_translation, text="OpenRouter API Key", bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 10, 'normal')).grid(row=2, column=0, sticky="w")
+        openrouter_key_label = tk.Label(tab_translation, text="OpenRouter API Key", bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 10, 'normal'))
+        openrouter_key_label.grid(row=2, column=0, sticky="w")
         openrouter_key_entry = tk.Entry(tab_translation, textvariable=openrouter_key_var, show="*", bg=self.theme["entry_bg"], fg=self.theme["entry_fg"], insertbackground=self.theme["entry_fg"], relief=tk.FLAT)
         openrouter_key_entry.grid(row=2, column=1, sticky="ew", pady=(0, 6))
 
         # Model dropdown (dynamic via OpenRouter API)
         model_display_var = tk.StringVar(value=tsettings.get("selected_model", "openrouter/auto"))
-        tk.Label(tab_translation, text="OpenRouter Model", bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 10, 'normal')).grid(row=3, column=0, sticky="w")
+        model_label = tk.Label(tab_translation, text="OpenRouter Model", bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 10, 'normal'))
+        model_label.grid(row=3, column=0, sticky="w")
         model_combo = ttk.Combobox(tab_translation, textvariable=model_display_var, values=[model_display_var.get()], state="normal")
         model_combo.grid(row=3, column=1, sticky="ew", pady=(0, 6))
         # Refresh models button
@@ -127,7 +129,8 @@ class SettingsWindow(tk.Toplevel):
         refresh_models_btn.grid(row=3, column=2, sticky="w")
 
         # JSON body editor for selected model
-        tk.Label(tab_translation, text="Model JSON Body", bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 10, 'normal')).grid(row=4, column=0, sticky="nw")
+        body_label = tk.Label(tab_translation, text="Model JSON Body", bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 10, 'normal'))
+        body_label.grid(row=4, column=0, sticky="nw")
         body_text = tk.Text(tab_translation, height=10, bg=self.theme["entry_bg"], fg=self.theme["entry_fg"], insertbackground=self.theme["entry_fg"], relief=tk.FLAT)
         body_text.grid(row=4, column=1, sticky="nsew", pady=(0, 6))
 
@@ -413,6 +416,7 @@ class SettingsWindow(tk.Toplevel):
         # Return is handled by the popup navigation handler; avoid duplicate binding
 
         def on_provider_changed(*_):
+            toggle_openrouter_settings()
             if provider_var.get() == "OpenRouter":
                 _populate_models_async(show_messages=False)
 
@@ -422,10 +426,32 @@ class SettingsWindow(tk.Toplevel):
             _populate_models_async(show_messages=False)
 
         # Global prompt editor
-        tk.Label(tab_translation, text="Global Prompt", bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 10, 'normal')).grid(row=5, column=0, sticky="nw")
+        prompt_label = tk.Label(tab_translation, text="Global Prompt", bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 10, 'normal'))
+        prompt_label.grid(row=5, column=0, sticky="nw")
         prompt_text = tk.Text(tab_translation, height=8, bg=self.theme["entry_bg"], fg=self.theme["entry_fg"], insertbackground=self.theme["entry_fg"], relief=tk.FLAT)
         prompt_text.grid(row=5, column=1, sticky="nsew")
         prompt_text.insert("1.0", tsettings.get("global_prompt", DEFAULT_PROMPT))
+
+        def toggle_openrouter_settings():
+            """Toggle visibility of OpenRouter-specific settings based on provider selection."""
+            is_openrouter = provider_var.get() == "OpenRouter"
+
+            # Control visibility of OpenRouter widgets
+            widgets_to_toggle = [
+                openrouter_key_label, openrouter_key_entry,
+                model_label, model_combo, refresh_models_btn,
+                body_label, body_text,
+                prompt_label, prompt_text
+            ]
+
+            for widget in widgets_to_toggle:
+                if is_openrouter:
+                    widget.grid()  # Show the widget
+                else:
+                    widget.grid_remove()  # Hide the widget
+
+        # Set initial visibility state (after all widgets are created)
+        toggle_openrouter_settings()
 
         # Save buttons row for translation tab
         def on_save_translation():
