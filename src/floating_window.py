@@ -44,7 +44,7 @@ class FloatingLyricsWindow:
         # Window configuration with glassmorphic effect
         self.window.attributes('-topmost', True)
         self.window.attributes('-alpha', 0.0)  # Start fully transparent for fade-in effect
-        self.window.geometry("800x180+100+100")
+        self.window.geometry("800x200+100+100")  # Increased height to prevent text clipping
         self.window.configure(bg=SPOTIFY_BLACK)
         
         # Add a subtle border
@@ -58,7 +58,7 @@ class FloatingLyricsWindow:
         
         # Create main frame with glassmorphic effect
         main_frame = tk.Frame(self.window, bg=SPOTIFY_DARK, padx=25, pady=20)
-        main_frame.pack(fill=tk.BOTH, expand=True)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
         
         # Add a subtle gradient effect using frames
         gradient_frame = tk.Frame(main_frame, bg=SPOTIFY_BLACK, height=2)
@@ -120,31 +120,10 @@ class FloatingLyricsWindow:
             wraplength=750,
             justify='left'
         )
-        self.translated_label.pack(fill=tk.X)
-        
-        # Progress bar frame with modern styling
-        self.progress_frame = tk.Frame(main_frame, bg=SPOTIFY_DARK)
-        self.progress_frame.pack(fill=tk.X, pady=(15, 0))
-        
-        # Create a custom progress bar with better styling
-        self.progress_bg = tk.Frame(
-            self.progress_frame,
-            bg=SPOTIFY_GRAY,
-            height=4
-        )
-        self.progress_bg.pack(fill=tk.X)
-        
-        self.progress_bar = tk.Frame(
-            self.progress_bg,
-            bg=SPOTIFY_GREEN,
-            height=4
-        )
-        self.progress_bar.place(x=0, y=0, width=0, height=4)
-        
+        self.translated_label.pack(fill=tk.X, pady=(4, 10))  # Added padding top and bottom to prevent clipping
+
         # Current line data
         self.current_line = None
-        self.current_position = 0
-        self.song_duration = 0
         
         # Start fade-in animation
         self.fade_in()
@@ -171,7 +150,7 @@ class FloatingLyricsWindow:
         self.window.geometry(f"+{x}+{y}")
     
     def update_lyrics(self, song_name, artist_name=None, current_line=None, position_ms=0, duration_ms=0, translated_title=None):
-        """Update the displayed lyrics and progress bar.
+        """Update the displayed lyrics.
 
         Args:
             song_name: Name of the current song
@@ -211,15 +190,6 @@ class FloatingLyricsWindow:
             self._transition_text(self.original_label, "")
             self._transition_text(self.translated_label, "")
             self.current_line = None
-
-        # Update progress bar
-        self.current_position = position_ms
-        self.song_duration = duration_ms
-        if duration_ms > 0:
-            # Update the progress bar after the frame has been rendered
-            self.window.after(10, self._update_progress_bar)
-        else:
-            print(f"[DEBUG] floating_window.update_lyrics: No duration available for progress bar")
     
     def _transition_text(self, label, new_text, steps=3):
         """Smoothly transition text in a label.
@@ -285,14 +255,7 @@ class FloatingLyricsWindow:
         
         # Convert back to hex
         return f'#{r:02x}{g:02x}{b:02x}'
-    
-    def _update_progress_bar(self):
-        """Update the progress bar width based on current position and duration."""
-        if self.song_duration > 0:
-            progress_width = int((self.current_position / self.song_duration) * self.progress_bg.winfo_width())
-            self.progress_bar.place(x=0, y=0, width=progress_width, height=4)
-            progress_value = (self.current_position / self.song_duration) * 100
-    
+
     def fade_in(self, step=0.05, target_alpha=0.9):
         """Fade in the window with a smooth animation.
         
