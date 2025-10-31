@@ -88,7 +88,8 @@ class LyricsManager:
                     'lyrics_source': 'Unknown',
                     'translation_source': 'Unknown',
                     'original_title': None,
-                    'translated_title': None
+                    'translated_title': None,
+                    'synced': True  # Default to True for backward compatibility
                 }
             # New format: dict with lyrics, lyrics_source, translation_source, and title info
             elif isinstance(cached, dict):
@@ -102,7 +103,8 @@ class LyricsManager:
                     'lyrics_source': cached.get('lyrics_source', 'Unknown'),
                     'translation_source': cached.get('translation_source', 'Unknown'),
                     'original_title': cached.get('original_title'),
-                    'translated_title': cached.get('translated_title')
+                    'translated_title': cached.get('translated_title'),
+                    'synced': cached.get('synced', True)  # Get synced status from cache
                 }
         return None
     
@@ -153,7 +155,8 @@ class LyricsManager:
                 'translated_title': translated_title,
                 'lyrics': [],
                 'lyrics_source': 'Unknown',
-                'translation_source': 'Unknown'
+                'translation_source': 'Unknown',
+                'synced': True  # Default to True for title-only entries
             }
             self.save_cache()
     
@@ -171,7 +174,7 @@ class LyricsManager:
             return cached.get('original_title'), cached.get('translated_title')
         return None, None
 
-    def translate_lyrics(self, lyrics_data, song_id, lyrics_source: str = "Unknown", callback=None, song_title: str = None):
+    def translate_lyrics(self, lyrics_data, song_id, lyrics_source: str = "Unknown", callback=None, song_title: str = None, synced: bool = True):
         """Translate lyrics using multithreading.
         
         Args:
@@ -222,11 +225,12 @@ class LyricsManager:
         
         # Already ordered
         
-        # Store in cache with source info and title info
+        # Store in cache with source info, title info, and synced status
         cache_entry = {
             'lyrics': translated_lyrics,
             'lyrics_source': lyrics_source,
-            'translation_source': translation_source
+            'translation_source': translation_source,
+            'synced': synced
         }
         
         # Add title info if available

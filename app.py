@@ -264,6 +264,20 @@ def merge_translations_into_current(translated_lyrics):
         if key in current_lookup:
             current_lookup[key]['translated'] = translated['translated']
             updated_count += 1
+        else:
+            # Try with type conversion for startTimeMs (string vs int)
+            alt_key = None
+            if isinstance(translated['startTimeMs'], str):
+                try:
+                    alt_key = (int(translated['startTimeMs']), translated['words'])
+                except ValueError:
+                    pass
+            elif isinstance(translated['startTimeMs'], int):
+                alt_key = (str(translated['startTimeMs']), translated['words'])
+
+            if alt_key and alt_key in current_lookup:
+                current_lookup[alt_key]['translated'] = translated['translated']
+                updated_count += 1
 
     print(f"[DEBUG] merge_translations_into_current: Merged {updated_count} translated lines into current_lyrics")
     return updated_count
@@ -456,94 +470,140 @@ def update_lyrics():
         # Update window title with song info
         root.title(f"{song_name} • {artist_name} - Spotify Lyrics Translator")
         
-        # Update status
-        status_label.config(text="Loading lyrics...")
-        
-        # Get lyrics via service with fast retries and fallback
-        lyrics = None
-        if spotify_client and lyrics_service:
-            meta_dict, _ = spotify_client.get_current_track_metadata()
-            if meta_dict:
-                track_meta = TrackMetadata(
-                    track_name=meta_dict['track_name'],
-                    artist_name=meta_dict['artist_name'],
-                    album_name=meta_dict['album_name'],
-                    duration_ms=meta_dict['duration_ms'],
-                )
-                lyrics = lyrics_service.get_lyrics(track_meta, song_id)
-        lyrics_data = lyrics['lyrics']['lines'] if lyrics and 'lyrics' in lyrics and 'lines' in lyrics['lyrics'] else None
-        lyrics_synced = (lyrics and lyrics.get('lyrics', {}).get('synced', True))
-        # Extract lyrics source from response
-        current_lyrics_source = lyrics.get('source', 'Unknown') if lyrics else 'Unknown'
-        print(f"[DEBUG] update_lyrics: Retrieved lyrics data, has_lyrics={lyrics_data is not None}, lyrics_count={len(lyrics_data) if lyrics_data else 0}, source={current_lyrics_source}")
+        # Check cache first - avoid expensive API calls if we already have lyrics
+        cached = lyrics_manager.get_cached_lyrics(song_id)
+        if cached:
+            print(f"[DEBUG] update_lyrics: Using cached lyrics for song {song_id}, length={len(cached.get('lyrics', []))}")
+            # Update status
+            status_label.config(text="Loading cached lyrics...")
 
-        # Clear existing treeview items
-        tree.delete(*tree.get_children())
+            # Extract cached data
+            lyrics_data = cached.get('lyrics', [])
+            lyrics_synced = cached.get('synced', True)  # Get actual synced status from cache
+            current_lyrics_source = cached.get('lyrics_source', 'Unknown')
+            current_translation_source = cached.get('translation_source', 'Unknown')
 
-        if lyrics_data:
-            # Detect the language of the first line of lyrics
-            detected_lang = lyrics['lyrics']['language']
-            language = detected_lang
-            # Update column headers with source info
-            update_column_headers()
+            # Clear existing treeview items
+            tree.delete(*tree.get_children())
 
-            # Initialize current_lyrics as single source of truth with original lyrics
-            current_lyrics = [
-                {'startTimeMs': lyric['startTimeMs'], 'words': lyric['words'], 'translated': ''}
-                for lyric in lyrics_data
-            ]
-            print(f"[DEBUG] update_lyrics: Initialized current_lyrics with {len(current_lyrics)} lines")
+            if lyrics_data:
+                # Initialize current_lyrics from cached data (already includes translations)
+                current_lyrics = [
+                    {'startTimeMs': lyric['startTimeMs'], 'words': lyric['words'], 'translated': lyric.get('translated', '')}
+                    for lyric in lyrics_data
+                ]
+                print(f"[DEBUG] update_lyrics: Loaded {len(current_lyrics)} cached lines")
 
-            # Populate Treeview from current_lyrics with alternating row colors
-            for i, lyric in enumerate(current_lyrics):
-                tag = 'evenrow' if i % 2 == 0 else 'oddrow'
-                time_text = lyrics_manager.ms_to_min_sec(lyric['startTimeMs']) if lyrics_synced else ""
-                tree.insert("", "end", values=(time_text, lyric['words'], lyric['translated']), tags=(tag,))
-
-            # Ensure the UI renders original lyrics immediately before translation starts
-            try:
-                root.update_idletasks()
-            except Exception:
-                pass
-            
-            # Toggle unsynced banner and Time heading/column
-            try:
-                if lyrics_synced:
-                    unsynced_banner_frame.pack_forget()
-                    unsynced_banner_frame._packed = False
-                    tree.heading("Time", text="  Time")
-                else:
-                    unsynced_banner_label.config(text="Lyrics are not time-synced.")
-                    if not getattr(unsynced_banner_frame, '_packed', False):
-                        # Place banner above the lyrics table
-                        unsynced_banner_frame.pack(before=frame, fill=tk.X, padx=20, pady=(10, 5))
-                        unsynced_banner_frame._packed = True
-                    tree.heading("Time", text="")
-            except Exception:
-                pass
-            
-            # Check cache first
-            cached = lyrics_manager.get_cached_lyrics(song_id)
-            if cached:
-                print(f"[DEBUG] update_lyrics: Using cached lyrics for song {song_id}, length={len(cached.get('lyrics', []))}")
-                # Update source info from cache
-                current_lyrics_source = cached.get('lyrics_source', current_lyrics_source)
-                current_translation_source = cached.get('translation_source', current_translation_source)
+                # Update column headers with source info
                 update_column_headers()
-                status_label.config(text="Using cached translations")
-                merge_translations_into_current(cached)
-                
+
+                # Populate Treeview with cached lyrics (including translations)
+                for i, lyric in enumerate(current_lyrics):
+                    tag = 'evenrow' if i % 2 == 0 else 'oddrow'
+                    time_text = lyrics_manager.ms_to_min_sec(lyric['startTimeMs']) if lyrics_synced else ""
+                    tree.insert("", "end", values=(time_text, lyric['words'], lyric['translated']), tags=(tag,))
+
+                # Toggle synced banner and Time heading/column
+                try:
+                    if lyrics_synced:
+                        if getattr(unsynced_banner_label, '_packed', False):
+                            unsynced_banner_label.pack_forget()
+                            unsynced_banner_label._packed = False
+                        tree.heading("Time", text="  Time")
+                    else:
+                        unsynced_banner_label.config(text="Lyrics are not time-synced.")
+                        if not getattr(unsynced_banner_label, '_packed', False):
+                            # Place banner to the right of refresh button
+                            unsynced_banner_label.pack(side=tk.LEFT, padx=(20, 0))
+                            unsynced_banner_label._packed = True
+                        tree.heading("Time", text="")
+                except Exception:
+                    pass
+
                 # Update song title with cached translation if available
                 original_title, translated_title = lyrics_manager.get_cached_title(song_id)
                 if original_title and translated_title and original_title != translated_title:
                     display_title = f"{original_title} ({translated_title})"
                     current_song_var.set(f"{display_title} • {artist_name}")
                     root.title(f"{display_title} • {artist_name} - Spotify Lyrics Translator")
-                
-                # Schedule UI update on main thread
-                root.after(0, update_translations)
+
+                status_label.config(text="Ready")
+                adjust_column_widths()
             else:
-                print(f"[DEBUG] update_lyrics: No cached lyrics, starting translation for song {song_id}")
+                print("[DEBUG] update_lyrics: Cached lyrics data is empty")
+                status_label.config(text="Cached lyrics data corrupted")
+        else:
+            # No cached lyrics - fetch fresh lyrics
+            print(f"[DEBUG] update_lyrics: No cached lyrics, fetching fresh lyrics for song {song_id}")
+
+            # Update status
+            status_label.config(text="Loading lyrics...")
+
+            # Get lyrics via service with fast retries and fallback
+            lyrics = None
+            if spotify_client and lyrics_service:
+                meta_dict, _ = spotify_client.get_current_track_metadata()
+                if meta_dict:
+                    track_meta = TrackMetadata(
+                        track_name=meta_dict['track_name'],
+                        artist_name=meta_dict['artist_name'],
+                        album_name=meta_dict['album_name'],
+                        duration_ms=meta_dict['duration_ms'],
+                    )
+                    lyrics = lyrics_service.get_lyrics(track_meta, song_id)
+            lyrics_data = lyrics['lyrics']['lines'] if lyrics and 'lyrics' in lyrics and 'lines' in lyrics['lyrics'] else None
+            lyrics_synced = (lyrics and lyrics.get('lyrics', {}).get('synced', True))
+            # Extract lyrics source from response
+            current_lyrics_source = lyrics.get('source', 'Unknown') if lyrics else 'Unknown'
+            print(f"[DEBUG] update_lyrics: Retrieved lyrics data, has_lyrics={lyrics_data is not None}, lyrics_count={len(lyrics_data) if lyrics_data else 0}, source={current_lyrics_source}")
+
+            # Clear existing treeview items
+            tree.delete(*tree.get_children())
+
+            if lyrics_data:
+                # Detect the language of the first line of lyrics
+                detected_lang = lyrics['lyrics']['language']
+                language = detected_lang
+                # Update column headers with source info
+                update_column_headers()
+
+                # Initialize current_lyrics as single source of truth with original lyrics
+                current_lyrics = [
+                    {'startTimeMs': lyric['startTimeMs'], 'words': lyric['words'], 'translated': ''}
+                    for lyric in lyrics_data
+                ]
+                print(f"[DEBUG] update_lyrics: Initialized current_lyrics with {len(current_lyrics)} lines")
+
+                # Populate Treeview from current_lyrics with alternating row colors
+                for i, lyric in enumerate(current_lyrics):
+                    tag = 'evenrow' if i % 2 == 0 else 'oddrow'
+                    time_text = lyrics_manager.ms_to_min_sec(lyric['startTimeMs']) if lyrics_synced else ""
+                    tree.insert("", "end", values=(time_text, lyric['words'], lyric['translated']), tags=(tag,))
+
+                # Ensure the UI renders original lyrics immediately before translation starts
+                try:
+                    root.update_idletasks()
+                except Exception:
+                    pass
+
+                # Toggle unsynced banner and Time heading/column
+                try:
+                    if lyrics_synced:
+                        if getattr(unsynced_banner_label, '_packed', False):
+                            unsynced_banner_label.pack_forget()
+                            unsynced_banner_label._packed = False
+                        tree.heading("Time", text="  Time")
+                    else:
+                        unsynced_banner_label.config(text="Lyrics are not time-synced.")
+                        if not getattr(unsynced_banner_label, '_packed', False):
+                            # Place banner to the right of refresh button
+                            unsynced_banner_label.pack(side=tk.LEFT, padx=(20, 0))
+                            unsynced_banner_label._packed = True
+                        tree.heading("Time", text="")
+                except Exception:
+                    pass
+
+                print(f"[DEBUG] update_lyrics: Starting translation for song {song_id}")
                 status_label.config(text="Translating lyrics...")
                 # Translate in background thread
                 def translate_callback(translated):
@@ -557,14 +617,14 @@ def update_lyrics():
                     update_column_headers()
                     status_label.config(text="Translation complete")
                     merge_translations_into_current(translated)
-                    
+
                     # Update song title with translation if available
                     original_title, translated_title = lyrics_manager.get_cached_title(song_id)
                     if original_title and translated_title and original_title != translated_title:
                         display_title = f"{original_title} ({translated_title})"
                         current_song_var.set(f"{display_title} • {artist_name}")
                         root.title(f"{display_title} • {artist_name} - Spotify Lyrics Translator")
-                    
+
                     # Schedule UI update on main thread
                     root.after(0, update_translations)
                     # Reset status after a delay
@@ -572,19 +632,19 @@ def update_lyrics():
 
                 threading.Thread(
                     target=lyrics_manager.translate_lyrics,
-                    args=(lyrics_data, song_id, current_lyrics_source, translate_callback, song_name)
+                    args=(lyrics_data, song_id, current_lyrics_source, translate_callback, song_name, lyrics_synced)
                 ).start()
-        elif lyrics is None:
-            # Could be an auth error or API error; handled elsewhere
-            current_lyrics_source = "unknown"
-            current_translation_source = "unknown"
-            status_label.config(text="No lyrics found")
-            update_column_headers()
-        else:
-            print("[DEBUG] update_lyrics: No lyrics data available for this song")
-            status_label.config(text="No lyrics available")
-            tree.insert("", "end", values=("0:00", "(No lyrics found)", ""), tags=('evenrow',))
-            current_lyrics = []
+            elif lyrics is None:
+                # Could be an auth error or API error; handled elsewhere
+                current_lyrics_source = "unknown"
+                current_translation_source = "unknown"
+                status_label.config(text="No lyrics found")
+                update_column_headers()
+            else:
+                print("[DEBUG] update_lyrics: No lyrics data available for this song")
+                status_label.config(text="No lyrics available")
+                tree.insert("", "end", values=("0:00", "(No lyrics found)", ""), tags=('evenrow',))
+                current_lyrics = []
         
         adjust_column_widths()
     except Exception as e:
@@ -837,18 +897,6 @@ SPOTIFY_GREEN_ACTIVE = '#1AA34A'
 # Configure root background
 root.configure(bg=SPOTIFY_BLACK)
 
-# Unsynced banner (initially hidden)
-unsynced_banner_frame = tk.Frame(root, bg=SPOTIFY_DARK, height=30)
-unsynced_banner_label = tk.Label(
-    unsynced_banner_frame,
-    text="Lyrics are not time-synced.",
-    fg=SPOTIFY_LIGHT_GRAY,
-    bg=SPOTIFY_DARK
-)
-apply_font_to_widget(unsynced_banner_label, font_size=11)
-unsynced_banner_label.pack(side=tk.LEFT, padx=20, pady=6)
-unsynced_banner_frame._packed = False
-
 # Create header frame with app branding
 header_frame = tk.Frame(root, bg=SPOTIFY_DARK, height=80)
 header_frame.pack(fill=tk.X, padx=0, pady=0)
@@ -911,6 +959,16 @@ current_time_label.pack()
 # Control panel frame
 control_frame = tk.Frame(root, bg=SPOTIFY_BLACK, height=60)
 control_frame.pack(fill=tk.X, padx=20, pady=10)
+
+# Unsynced banner (initially hidden)
+unsynced_banner_label = tk.Label(
+    control_frame,
+    text="Lyrics are not time-synced.",
+    fg=SPOTIFY_LIGHT_GRAY,
+    bg=SPOTIFY_BLACK,
+    font=(get_selected_font(), 11, 'bold')
+)
+unsynced_banner_label._packed = False
 
 # Toggle floating lyrics button with modern styling
 toggle_button = tk.Button(
