@@ -1479,10 +1479,8 @@ def _on_lyric_double_click(event=None):
         return
     # Attempt seek + play
     if spotify_client and spotify_client.seek_and_play(pos_ms):
-        try:
-            status_label.config(text=f"Jumped to {vals[0]}")
-        except Exception:
-            pass
+        # Removed the "Jumped to" notification as requested
+        pass
     else:
         # Optional: check device status for better hint
         try:
