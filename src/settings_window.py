@@ -1121,7 +1121,17 @@ class SettingsWindow(tk.Toplevel):
         save_btn = tk.Button(footer, text="Save", command=on_save_translation, bg=self.theme["accent"], fg=self.theme["button_fg"], activebackground=self.theme["accent_active"], relief=tk.FLAT, padx=16, pady=8, cursor="hand2", font=(get_selected_font(), 10, 'normal'))
         save_btn.pack(side=tk.RIGHT)
 
-        self.bind("<Return>", lambda e: self._on_save())
+        # Bind Enter key to save, but only when not editing text fields
+        def on_enter_key(event):
+            # Get the widget that currently has focus
+            focused = self.focus_get()
+            # If focus is on a Text widget, allow default behavior (insert newline)
+            if isinstance(focused, tk.Text):
+                return
+            # Otherwise, trigger save
+            self._on_save()
+
+        self.bind("<Return>", on_enter_key)
         self.bind("<Escape>", lambda e: self._on_cancel())
 
     def _collect_values(self) -> Dict[str, str]:

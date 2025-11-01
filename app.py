@@ -1,7 +1,6 @@
 import tkinter as tk
 from tkinter import ttk
 import threading
-import logging
 import time
 import bisect
 import sv_ttk
@@ -22,9 +21,11 @@ from src.translation_settings import (
 )
 from src.settings_window import SettingsWindow
 from src.font_manager import get_default_chinese_font
+from src.logging_config import setup_logging, get_logger
 
-# Configure logging to show INFO level and above
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+# Setup logging
+setup_logging()
+logger = get_logger(__name__)
 
 # Initialize Spotify client via settings
 spotify_client = None
@@ -85,7 +86,7 @@ def _playback_polling_loop():
         try:
             playback, position = client.get_current_playback()
         except Exception as exc:
-            logging.debug(f"Playback polling failed: {exc}")
+            logger.debug(f"Playback polling failed: {exc}")
             playback = None
             position = 0
 
@@ -203,7 +204,7 @@ def init_spotify_client(settings):
         lyrics_service = LyricsService(providers)
         start_playback_polling()
     except Exception as e:
-        print(f"Error initializing Spotify client: {e}")
+        logger.error(f"Error initializing Spotify client: {e}")
         try:
             status_label.config(text="Authentication failed. Open Settings.")
         except Exception:
@@ -241,7 +242,7 @@ def init_translation_client():
             except Exception:
                 pass
         except Exception as e:
-            print(f"Error initializing OpenRouter client: {e}")
+            logger.error(f"Error initializing OpenRouter client: {e}")
             lyrics_manager.translation_client = GoogleTranslateClient()
             current_translation_source = lyrics_manager.translation_client.get_source_name()
             try:
@@ -349,7 +350,7 @@ def merge_translations_into_current(translated_lyrics):
                 current_lookup[alt_key]['translated'] = translated['translated']
                 updated_count += 1
 
-    print(f"[DEBUG] merge_translations_into_current: Merged {updated_count} translated lines into current_lyrics")
+    logger.debug(f"merge_translations_into_current: Merged {updated_count} translated lines into current_lyrics")
     return updated_count
 
 # Function to get the current song and playback position
@@ -607,7 +608,7 @@ def update_lyrics():
         # Get current playback
         current_playback, _ = get_current_playback_position()
         if not current_playback or not current_playback['item']:
-            print("[DEBUG] update_lyrics: No current playback or item, returning")
+            logger.debug("update_lyrics: No current playback or item, returning")
             # Show a friendly hint if possible
             try:
                 if spotify_client:
@@ -630,7 +631,7 @@ def update_lyrics():
         song_name = current_playback['item']['name']
         artist_name = current_playback['item']['artists'][0]['name'] if current_playback['item']['artists'] else "Unknown Artist"
         current_song_name = song_name
-        print(f"[DEBUG] update_lyrics: Processing song '{song_name}' with ID {song_id}")
+        logger.debug(f"update_lyrics: Processing song '{song_name}' with ID {song_id}")
         
         # Update window title with song info
         root.title(f"{song_name} • {artist_name} - Spotify Lyrics Translator")
@@ -638,7 +639,7 @@ def update_lyrics():
         # Check cache first - avoid expensive API calls if we already have lyrics
         cached = lyrics_manager.get_cached_lyrics(song_id)
         if cached:
-            print(f"[DEBUG] update_lyrics: Using cached lyrics for song {song_id}, length={len(cached.get('lyrics', []))}")
+            logger.debug(f"update_lyrics: Using cached lyrics for song {song_id}, length={len(cached.get('lyrics', []))}")
             # Update status
             status_label.config(text="Loading cached lyrics...")
 
@@ -660,7 +661,7 @@ def update_lyrics():
                     {'startTimeMs': lyric['startTimeMs'], 'words': lyric['words'], 'translated': lyric.get('translated', '')}
                     for lyric in lyrics_data
                 ]
-                print(f"[DEBUG] update_lyrics: Loaded {len(current_lyrics)} cached lines")
+                logger.debug(f"update_lyrics: Loaded {len(current_lyrics)} cached lines")
 
                 # Update column headers with source info
                 update_column_headers()
@@ -703,11 +704,11 @@ def update_lyrics():
                 status_label.config(text="Ready")
                 adjust_column_widths()
             else:
-                print("[DEBUG] update_lyrics: Cached lyrics data is empty")
+                logger.debug("update_lyrics: Cached lyrics data is empty")
                 status_label.config(text="Cached lyrics data corrupted")
         else:
             # No cached lyrics - fetch fresh lyrics
-            print(f"[DEBUG] update_lyrics: No cached lyrics, fetching fresh lyrics for song {song_id}")
+            logger.debug(f"update_lyrics: No cached lyrics, fetching fresh lyrics for song {song_id}")
 
             # Update status
             status_label.config(text="Loading lyrics...")
@@ -728,7 +729,7 @@ def update_lyrics():
             lyrics_synced = (lyrics and lyrics.get('lyrics', {}).get('synced', True))
             # Extract lyrics source from response
             current_lyrics_source = lyrics.get('source', 'Unknown') if lyrics else 'Unknown'
-            print(f"[DEBUG] update_lyrics: Retrieved lyrics data, has_lyrics={lyrics_data is not None}, lyrics_count={len(lyrics_data) if lyrics_data else 0}, source={current_lyrics_source}")
+            logger.debug(f"update_lyrics: Retrieved lyrics data, has_lyrics={lyrics_data is not None}, lyrics_count={len(lyrics_data) if lyrics_data else 0}, source={current_lyrics_source}")
 
             # Clear existing treeview items
             tree.delete(*tree.get_children())
@@ -748,7 +749,7 @@ def update_lyrics():
                     {'startTimeMs': lyric['startTimeMs'], 'words': lyric['words'], 'translated': ''}
                     for lyric in lyrics_data
                 ]
-                print(f"[DEBUG] update_lyrics: Initialized current_lyrics with {len(current_lyrics)} lines")
+                logger.debug(f"update_lyrics: Initialized current_lyrics with {len(current_lyrics)} lines")
 
                 # Populate Treeview from current_lyrics with alternating row colors
                 for i, lyric in enumerate(current_lyrics):
@@ -784,7 +785,7 @@ def update_lyrics():
                 except Exception:
                     pass
 
-                print(f"[DEBUG] update_lyrics: Starting translation for song {song_id}")
+                logger.debug(f"update_lyrics: Starting translation for song {song_id}")
 
                 # Check if user selected OpenRouter but API key is missing
                 settings = read_translation_settings()
@@ -798,7 +799,7 @@ def update_lyrics():
                 status_label.config(text="Translating lyrics...")
                 # Translate in background thread
                 def translate_callback(translated):
-                    print(f"[DEBUG] translate_callback: Translation completed for song {song_id}, received {len(translated)} lines")
+                    logger.debug(f"translate_callback: Translation completed for song {song_id}, received {len(translated)} lines")
                     # Update translation source from current client
                     global current_translation_source
                     try:
@@ -832,14 +833,14 @@ def update_lyrics():
                 status_label.config(text="No lyrics found")
                 update_column_headers()
             else:
-                print("[DEBUG] update_lyrics: No lyrics data available for this song")
+                logger.debug("update_lyrics: No lyrics data available for this song")
                 status_label.config(text="No lyrics available")
                 tree.insert("", "end", values=("0:00", "(No lyrics found)", ""), tags=('evenrow',))
                 current_lyrics = []
         
         adjust_column_widths()
     except Exception as e:
-        print(f"Error updating lyrics: {e}")
+        logger.error(f"Error updating lyrics: {e}")
         status_label.config(text="Error loading lyrics")
 
 # Function to update the Treeview with translated lyrics from current_lyrics
@@ -876,7 +877,7 @@ def update_translations():
                     updated_count += 1
                     _highlight_translation(item)
 
-    print(f"[DEBUG] update_translations: Updated {updated_count} translated lyrics in Treeview")
+    logger.debug(f"update_translations: Updated {updated_count} translated lyrics in Treeview")
 
     # Log first few updated lines for verification
     if current_lyrics and len(current_lyrics) > 0:
@@ -1546,7 +1547,7 @@ def initialize_font_settings():
                 selected_font = proper_default
                 refresh_ui_font()
     except Exception as e:
-        print(f"Warning: Could not initialize font settings: {e}")
+        logger.warning(f"Could not initialize font settings: {e}")
 
 initialize_font_settings()
 

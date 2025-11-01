@@ -5,6 +5,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, List
 
 from .translation_clients import BaseTranslationClient, GoogleTranslateClient
+from .logging_config import get_logger
+
+logger = get_logger(__name__)
 
 
 class LyricsManager:
@@ -34,7 +37,7 @@ class LyricsManager:
                 with open(self.cache_file, 'rb') as f:
                     return pickle.load(f)
             except Exception as e:
-                print(f"Error loading cache: {e}")
+                logger.error(f"Error loading cache: {e}")
                 return {}
         return {}
     
@@ -44,7 +47,7 @@ class LyricsManager:
             with open(self.cache_file, 'wb') as f:
                 pickle.dump(self.cache, f)
         except Exception as e:
-            print(f"Error saving cache: {e}")
+            logger.error(f"Error saving cache: {e}")
     
     def clear_cache(self, song_id: Optional[str] = None):
         """Clear cached translations.
@@ -60,7 +63,7 @@ class LyricsManager:
                 self.cache.clear()
             self.save_cache()
         except Exception as e:
-            print(f"Error clearing cache: {e}")
+            logger.error(f"Error clearing cache: {e}")
     
     def get_cached_lyrics(self, song_id):
         """Get cached translated lyrics for a song.
@@ -82,7 +85,7 @@ class LyricsManager:
                 try:
                     cached.sort(key=lambda x: int(x['startTimeMs']))
                 except Exception as e:
-                    print(f"[DEBUG] get_cached_lyrics: Sort failed: {e}")
+                    logger.debug(f"get_cached_lyrics: Sort failed: {e}")
                 return {
                     'lyrics': cached,
                     'lyrics_source': 'Unknown',
@@ -97,7 +100,7 @@ class LyricsManager:
                 try:
                     lyrics.sort(key=lambda x: int(x['startTimeMs']))
                 except Exception as e:
-                    print(f"[DEBUG] get_cached_lyrics: Sort failed: {e}")
+                    logger.debug(f"get_cached_lyrics: Sort failed: {e}")
                 return {
                     'lyrics': lyrics,
                     'lyrics_source': cached.get('lyrics_source', 'Unknown'),
@@ -131,7 +134,7 @@ class LyricsManager:
             if translated_titles and len(translated_titles) > 0:
                 return translated_titles[0]
         except Exception as e:
-            print(f"Error translating song title: {e}")
+            logger.error(f"Error translating song title: {e}")
             
         # Return original title if translation fails
         return song_title
@@ -198,7 +201,7 @@ class LyricsManager:
                 target_lang=self.target_language,
             )
         except Exception as e:
-            print(f"Error translating lyrics via client: {e}")
+            logger.error(f"Error translating lyrics via client: {e}")
             # Fallback: keep originals on error
             translated_lines = original_lines
 
@@ -207,7 +210,7 @@ class LyricsManager:
         try:
             translation_source = self.translation_client.get_source_name()
         except Exception as e:
-            print(f"Error getting translation source name: {e}")
+            logger.error(f"Error getting translation source name: {e}")
 
         # Translate song title if provided
         translated_title = None
@@ -263,32 +266,32 @@ class LyricsManager:
         Returns:
             dict: Current lyric line or None if no lyrics
         """
-        print(f"[DEBUG] get_current_line: lyrics_length={len(lyrics) if lyrics else 0}, position_ms={position_ms}")
+        logger.debug(f"get_current_line: lyrics_length={len(lyrics) if lyrics else 0}, position_ms={position_ms}")
         if not lyrics:
-            print(f"[DEBUG] get_current_line: No lyrics available, returning None")
+            logger.debug("get_current_line: No lyrics available, returning None")
             return None
 
         current_line = None
         for lyric in lyrics:
             lyric_time = int(lyric['startTimeMs'])
-            print(f"[DEBUG] get_current_line: Checking lyric at {lyric_time}ms: '{lyric.get('words', '')[:50]}...'")
+            logger.debug(f"get_current_line: Checking lyric at {lyric_time}ms: '{lyric.get('words', '')[:50]}...'")
             if lyric_time <= position_ms:
                 current_line = lyric
-                print(f"[DEBUG] get_current_line: Found current line at {lyric_time}ms")
+                logger.debug(f"get_current_line: Found current line at {lyric_time}ms")
             else:
-                print(f"[DEBUG] get_current_line: Lyric at {lyric_time}ms is in the future, breaking")
+                logger.debug(f"get_current_line: Lyric at {lyric_time}ms is in the future, breaking")
                 break
 
         # If no current line found (we're before all lyrics), return the first lyric
         if current_line is None and lyrics:
             current_line = lyrics[0]
-            print(f"[DEBUG] get_current_line: No current line found, returning first upcoming lyric at {lyrics[0].get('startTimeMs')}ms")
+            logger.debug(f"get_current_line: No current line found, returning first upcoming lyric at {lyrics[0].get('startTimeMs')}ms")
 
         result = current_line
         if result is None:
-            print(f"[DEBUG] get_current_line: Returning None")
+            logger.debug("get_current_line: Returning None")
         else:
-            print(f"[DEBUG] get_current_line: Returning line at {result.get('startTimeMs')}ms: '{result.get('words', '')[:50]}...'")
+            logger.debug(f"get_current_line: Returning line at {result.get('startTimeMs')}ms: '{result.get('words', '')[:50]}...'")
         return current_line
     
     @staticmethod

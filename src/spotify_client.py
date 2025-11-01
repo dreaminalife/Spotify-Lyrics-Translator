@@ -2,8 +2,11 @@
 from spotipy import Spotify
 from spotipy.oauth2 import SpotifyOAuth
 from syrics.api import Spotify as SyricsSpotify
+from .logging_config import get_logger
 import time
 import random
+
+logger = get_logger(__name__)
 
 
 class SpotifyClient:
@@ -31,8 +34,8 @@ class SpotifyClient:
         
         # Authenticate and print user info
         user = self.sp.current_user()
-        print("Spotify authentication successful!")
-        print(f"Logged in as: {user['display_name']}")
+        logger.info("Spotify authentication successful!")
+        logger.info(f"Logged in as: {user['display_name']}")
     
     def get_current_playback(self):
         """Get current playback information.
@@ -58,11 +61,11 @@ class SpotifyClient:
                 all_names = [d.get('name') for d in devices]
                 active_names = [d.get('name') for d in devices if d.get('is_active')]
             except Exception as de:
-                print(f"Error fetching devices: {de}")
+                logger.error(f"Error fetching devices: {de}")
 
             return None, 0
         except Exception as e:
-            print(f"Error fetching current song playback position: {e}")
+            logger.error(f"Error fetching current song playback position: {e}")
             return None, 0
 
     # Legacy method removed: retry logic is now centralized in LyricsService
@@ -70,7 +73,7 @@ class SpotifyClient:
         try:
             return self.syrics_sp.get_lyrics(song_id)
         except Exception as e:
-            print(f"Error fetching lyrics: {e}")
+            logger.error(f"Error fetching lyrics: {e}")
             return None
 
     def get_current_track_metadata(self):
@@ -105,7 +108,7 @@ class SpotifyClient:
             }
             return meta, track_id
         except Exception as e:
-            print(f"Error building current track metadata: {e}")
+            logger.error(f"Error building current track metadata: {e}")
             return None, None
 
     def get_device_status(self):
@@ -123,7 +126,7 @@ class SpotifyClient:
                 'active_device': active.get('name') if active else None,
             }
         except Exception as e:
-            print(f"Error fetching device status: {e}")
+            logger.error(f"Error fetching device status: {e}")
             return { 'devices': [], 'active_device': None }
 
     def seek_to_position(self, position_ms: int) -> bool:
@@ -139,7 +142,7 @@ class SpotifyClient:
             self.sp.seek_track(int(position_ms))
             return True
         except Exception as e:
-            print(f"Error seeking to {position_ms}: {e}")
+            logger.error(f"Error seeking to {position_ms}: {e}")
             return False
 
     def ensure_playing(self) -> bool:
@@ -157,7 +160,7 @@ class SpotifyClient:
                 self.sp.start_playback()
             return True
         except Exception as e:
-            print(f"Error ensuring playback: {e}")
+            logger.error(f"Error ensuring playback: {e}")
             return False
 
     def seek_and_play(self, position_ms: int) -> bool:
@@ -192,7 +195,7 @@ class SpotifyClient:
                 self.sp.start_playback()
             return True
         except Exception as e:
-            print(f"Error toggling play/pause: {e}")
+            logger.error(f"Error toggling play/pause: {e}")
             return False
 
     def next_track(self) -> bool:
@@ -205,7 +208,7 @@ class SpotifyClient:
             self.sp.next_track()
             return True
         except Exception as e:
-            print(f"Error skipping to next track: {e}")
+            logger.error(f"Error skipping to next track: {e}")
             return False
 
     def previous_track(self) -> bool:
@@ -218,7 +221,7 @@ class SpotifyClient:
             self.sp.previous_track()
             return True
         except Exception as e:
-            print(f"Error going to previous track: {e}")
+            logger.error(f"Error going to previous track: {e}")
             return False
 
     def seek_forward(self, seconds: int = 10) -> bool:
@@ -241,7 +244,7 @@ class SpotifyClient:
 
             return self.seek_to_position(int(new_pos))
         except Exception as e:
-            print(f"Error seeking forward {seconds}s: {e}")
+            logger.error(f"Error seeking forward {seconds}s: {e}")
             return False
 
     def seek_backward(self, seconds: int = 10) -> bool:
@@ -263,7 +266,7 @@ class SpotifyClient:
 
             return self.seek_to_position(int(new_pos))
         except Exception as e:
-            print(f"Error seeking backward {seconds}s: {e}")
+            logger.error(f"Error seeking backward {seconds}s: {e}")
             return False
 
     def get_playback_state(self):
@@ -282,6 +285,6 @@ class SpotifyClient:
                 'item': pb.get('item')
             }
         except Exception as e:
-            print(f"Error getting playback state: {e}")
+            logger.error(f"Error getting playback state: {e}")
             return None
 

@@ -4,7 +4,10 @@ from tkinter import ttk
 import threading
 from .translation_settings import read_translation_settings, save_translation_settings, get_theme_colors
 from .font_manager import get_default_chinese_font
+from .logging_config import get_logger
 import time
+
+logger = get_logger(__name__)
 
 
 class FloatingLyricsWindow:
@@ -883,7 +886,7 @@ class FloatingLyricsWindow:
             
             # Record the timestamp to prevent polling from overriding our update
             self._last_play_pause_click = time.monotonic()
-            print(f"[DEBUG] Set click timestamp: {self._last_play_pause_click}")
+            logger.debug(f"Set click timestamp: {self._last_play_pause_click}")
 
             # Make the API call asynchronously to avoid blocking UI
             def toggle_playback():
@@ -891,40 +894,40 @@ class FloatingLyricsWindow:
                     success = self.spotify_client.play_pause()
                     # No need to update button here - let polling handle it
                 except Exception as e:
-                    print(f"Error toggling playback: {e}")
+                    logger.error(f"Error toggling playback: {e}")
 
             # Execute API call in background thread
             threading.Thread(target=toggle_playback, daemon=True).start()
         else:
-            print("No Spotify client available for playback control")
+            logger.warning("No Spotify client available for playback control")
 
     def next_track(self):
         """Skip to the next track."""
         if self.spotify_client:
             self._execute_with_feedback(self.next_button, self.spotify_client.next_track)
         else:
-            print("No Spotify client available for playback control")
+            logger.warning("No Spotify client available for playback control")
 
     def previous_track(self):
         """Go to the previous track."""
         if self.spotify_client:
             self._execute_with_feedback(self.prev_button, self.spotify_client.previous_track)
         else:
-            print("No Spotify client available for playback control")
+            logger.warning("No Spotify client available for playback control")
 
     def seek_forward(self):
         """Seek forward 10 seconds."""
         if self.spotify_client:
             self._execute_with_feedback(self.seek_forward_button, lambda: self.spotify_client.seek_forward(10))
         else:
-            print("No Spotify client available for playback control")
+            logger.warning("No Spotify client available for playback control")
 
     def seek_backward(self):
         """Seek backward 10 seconds."""
         if self.spotify_client:
             self._execute_with_feedback(self.seek_back_button, lambda: self.spotify_client.seek_backward(10))
         else:
-            print("No Spotify client available for playback control")
+            logger.warning("No Spotify client available for playback control")
 
     def _execute_with_feedback(self, button, action_func):
         """Execute an action with immediate visual feedback."""
@@ -936,7 +939,7 @@ class FloatingLyricsWindow:
             try:
                 action_func()
             except Exception as e:
-                print(f"Error executing action: {e}")
+                logger.error(f"Error executing action: {e}")
 
         # Run in background thread
         threading.Thread(target=execute_action, daemon=True).start()
@@ -956,17 +959,17 @@ class FloatingLyricsWindow:
         # Check if we recently clicked the button
         if hasattr(self, '_last_play_pause_click') and self._last_play_pause_click > 0:
             time_since_click = current_time - self._last_play_pause_click
-            print(f"[DEBUG] Time since click: {time_since_click}s")
+            logger.debug(f"Time since click: {time_since_click}s")
             
             # During grace period (3 seconds), completely skip updates
             if time_since_click < 3.0:
-                print("[DEBUG] Skipping button update due to recent click")
+                logger.debug("Skipping button update due to recent click")
                 return
             else:
                 # Grace period expired, but add a short debounce to prevent rapid updates
                 time_since_grace = time_since_click - 3.0
                 if time_since_grace < 0.5:  # 500ms debounce after grace period
-                    print(f"[DEBUG] Debouncing after grace period: {time_since_grace}s")
+                    logger.debug(f"Debouncing after grace period: {time_since_grace}s")
                     return
                 else:
                     # Clear the timestamp after debounce period
@@ -974,7 +977,7 @@ class FloatingLyricsWindow:
 
         # Debounce rapid successive updates (only update if 200ms have passed since last update)
         if hasattr(self, '_last_update_time') and current_time - self._last_update_time < 0.2:
-            print(f"[DEBUG] Debouncing rapid update")
+            logger.debug("Debouncing rapid update")
             return
 
         state_known = is_playing is not None
@@ -986,7 +989,7 @@ class FloatingLyricsWindow:
                     is_playing = state.get('is_playing', False)
                     state_known = True
             except Exception as e:
-                print(f"Error updating play_pause_button: {e}")
+                logger.error(f"Error updating play_pause_button: {e}")
 
         if state_known:
             new_text = "⏸" if is_playing else "▶"
@@ -994,13 +997,13 @@ class FloatingLyricsWindow:
             
             # Only update if the state actually changed
             if current_text != new_text:
-                print(f"[DEBUG] Updating button to: {new_text}")
+                logger.debug(f"Updating button to: {new_text}")
                 self.play_pause_button.config(text=new_text)
                 self._last_update_time = current_time
             else:
-                print(f"[DEBUG] Button already shows correct state: {new_text}")
+                logger.debug(f"Button already shows correct state: {new_text}")
         else:
-            print("[DEBUG] Updating button to play (unknown state)")
+            logger.debug("Updating button to play (unknown state)")
             self.play_pause_button.config(text="▶")
             self._last_update_time = current_time
 
