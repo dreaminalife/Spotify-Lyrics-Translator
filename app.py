@@ -441,9 +441,47 @@ def update_display():
                     try:
                         if last_index not in tree.selection():
                             tree.selection_set(last_index)
-                        tree.see(last_index)
+                        
+                        # Position the current line in the middle of the visible area
+                        # Get the total number of items in the tree
+                        total_items = len(tree.get_children())
+                        if total_items > 0:
+                            # Get the index of the current item
+                            current_index = 0
+                            for i, item_id in enumerate(tree.get_children()):
+                                if item_id == last_index:
+                                    current_index = i
+                                    break
+                            
+                            # Get the visible portion of the tree
+                            top, bottom = tree.yview()
+                            visible_height = bottom - top
+                            
+                            # Calculate the position of the current item in the visible area
+                            # Convert the current index to a fraction of the total
+                            current_fraction = current_index / total_items
+                            
+                            # Check if the current item is already in a comfortable position
+                            # We define a "comfort zone" in the middle 60% of the visible area
+                            comfort_zone_top = top + (visible_height * 0.1)
+                            comfort_zone_bottom = top + (visible_height * 0.8)
+                            
+                            # Only reposition if the current item is outside the comfort zone
+                            if current_fraction < comfort_zone_top or current_fraction > comfort_zone_bottom:
+                                # Calculate the position to center the current item
+                                center_fraction = current_fraction - (visible_height / 2)
+                                
+                                # Make sure the fraction is within valid bounds
+                                center_fraction = max(0, min(1 - visible_height, center_fraction))
+                                
+                                # Scroll to the calculated position
+                                tree.yview_moveto(center_fraction)
+                        else:
+                            # Fallback to the original behavior if we can't calculate the position
+                            tree.see(last_index)
                     except Exception:
-                        pass
+                        # If anything goes wrong, fall back to the original behavior
+                        tree.see(last_index)
             elif current_highlighted_item:
                 try:
                     prev_tags = list(tree.item(current_highlighted_item)['tags'])
