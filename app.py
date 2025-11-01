@@ -785,6 +785,16 @@ def update_lyrics():
                     pass
 
                 print(f"[DEBUG] update_lyrics: Starting translation for song {song_id}")
+
+                # Check if user selected OpenRouter but API key is missing
+                settings = read_translation_settings()
+                if settings.get("provider") == "OpenRouter":
+                    secrets = read_secrets()
+                    api_key = secrets.get("openrouter_api_key", "")
+                    if not api_key.strip():
+                        status_label.config(text="OpenRouter selected but API key missing. Please add it in Settings.")
+                        return  # Don't start translation
+
                 status_label.config(text="Translating lyrics...")
                 # Translate in background thread
                 def translate_callback(translated):
