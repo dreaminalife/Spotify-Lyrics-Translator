@@ -251,7 +251,7 @@ class FloatingLyricsWindow:
         # Previous track button
         self.prev_button = tk.Button(
             self.controls_center,
-            text="⏮",
+            text="◀◀",  # Changed from ⏮ to ◀◀
             font=icon_font,
             bg=button_bg,
             fg=button_fg,
@@ -289,7 +289,7 @@ class FloatingLyricsWindow:
         # Next track button
         self.next_button = tk.Button(
             self.controls_center,
-            text="⏭",
+            text="▶▶",  # Changed from ⏭ to ▶▶
             font=icon_font,
             bg=button_bg,
             fg=button_fg,
