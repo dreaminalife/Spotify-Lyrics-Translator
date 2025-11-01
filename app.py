@@ -915,9 +915,9 @@ def adjust_column_widths():
 
     # Use proportional sizing for consistent column spacing
     if lyrics_synced:
-        # Time column gets 15% of available width, min 80px, max 120px
-        time_width = max(80, min(120, int(available_width * 0.15)))
-        # Original and translated lyrics split the remaining 85% equally
+        # FIXED: Time column gets a constant width of 100px
+        time_width = 100  # Fixed width instead of percentage-based calculation
+        # Original and translated lyrics split the remaining width equally
         lyrics_width = int((available_width - time_width) * 0.5)
     else:
         # No time column for unsynced lyrics
