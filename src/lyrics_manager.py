@@ -1,34 +1,41 @@
 """Lyrics translation and caching management."""
 import pickle
 import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 from typing import Optional, List
 
 from .translation_clients import BaseTranslationClient, GoogleTranslateClient
+from . import provided_translations
 from .logging_config import get_logger
 
 logger = get_logger(__name__)
 
 
 class LyricsManager:
-    """Manages lyrics translation and caching."""
-    
+    """Manages lyrics translation and caching.
+
+    The cache holds one entry per (song, lyrics source), as another source's lyrics can have the same line count
+    but different lines. Each entry keeps the lyrics and their translations per (translator, target language).
+    """
+
     def __init__(self, cache_file='lyrics_cache.pkl', max_cache_size=1000, translation_client: Optional[BaseTranslationClient] = None, target_language: str = 'en'):
         """Initialize the lyrics manager.
-        
+
         Args:
             cache_file: Path to the cache file
-            max_cache_size: Maximum number of songs to cache
+            max_cache_size: Maximum number of (song, source) entries to cache
         """
         self.cache_file = cache_file
         self.max_cache_size = max_cache_size
+        # The lyrics loader and translation threads both write the cache
+        self._lock = threading.RLock()
         self.cache = self._load_cache()
         self.translation_client: BaseTranslationClient = translation_client or GoogleTranslateClient()
         self.target_language = target_language
-    
+
     def _load_cache(self):
         """Load cache from file if it exists.
-        
+
         Returns:
             dict: Cached lyrics translations
         """
@@ -40,90 +47,101 @@ class LyricsManager:
                 logger.error(f"Error loading cache: {e}")
                 return {}
         return {}
-    
+
     def save_cache(self):
         """Save cache to file."""
-        try:
-            with open(self.cache_file, 'wb') as f:
-                pickle.dump(self.cache, f)
-        except Exception as e:
-            logger.error(f"Error saving cache: {e}")
-    
-    def clear_cache(self, song_id: Optional[str] = None):
-        """Clear cached translations.
-        
+        with self._lock:
+            try:
+                with open(self.cache_file, 'wb') as f:
+                    pickle.dump(self.cache, f)
+            except Exception as e:
+                logger.error(f"Error saving cache: {e}")
+
+    @staticmethod
+    def _key(song_id: str, source: str) -> str:
+        # Entries from before per-source caching are keyed by the bare song id; they are never read and age out.
+        return f"{song_id}|{source}"
+
+    def translator_id(self) -> str:
+        """Identifies the translator in cache keys: "google" or "openrouter:<model>"."""
+        model = getattr(self.translation_client, 'model', None)
+        return f"openrouter:{model}" if model else "google"
+
+    def clear_cache(self, song_id: Optional[str] = None, source: Optional[str] = None):
+        """Clear cached lyrics and translations.
+
         Args:
-            song_id: If provided, only clear this track's cache; otherwise clear all.
+            song_id: If provided with source, only clear that source's lyrics for this track; otherwise clear all.
+            source: Lyrics source name
         """
-        try:
-            if song_id:
-                if song_id in self.cache:
-                    del self.cache[song_id]
-            else:
-                self.cache.clear()
+        with self._lock:
+            try:
+                if song_id and source:
+                    self.cache.pop(self._key(song_id, source), None)
+                else:
+                    self.cache.clear()
+                self.save_cache()
+            except Exception as e:
+                logger.error(f"Error clearing cache: {e}")
+
+    def get_cached(self, song_id: str, source: str) -> Optional[dict]:
+        """Cached lyrics of a source for a song, in the lyrics service's payload format, or None."""
+        with self._lock:
+            entry = self.cache.get(self._key(song_id, source))
+            return entry.get('payload') if isinstance(entry, dict) else None
+
+    def put_lyrics(self, song_id: str, payload: dict):
+        """Cache lyrics (a lyrics service payload); drops translations of the lyrics they replace."""
+        payload = {k: v for k, v in payload.items() if k != 'cached'}
+        with self._lock:
+            self.cache[self._key(song_id, payload.get('source', 'Unknown'))] = {'payload': payload, 'translations': {}}
+            # Ensure cache size doesn't exceed limit
+            while len(self.cache) > self.max_cache_size:
+                self.cache.pop(next(iter(self.cache)))
             self.save_cache()
-        except Exception as e:
-            logger.error(f"Error clearing cache: {e}")
-    
-    def get_cached_lyrics(self, song_id):
-        """Get cached translated lyrics for a song.
-        
-        Args:
-            song_id: Spotify track ID
-            
+
+    def get_translation(self, song_id: str, source: str, line_count: int) -> Optional[dict]:
+        """Cached translation by the current translator to the current target language, or None.
+
         Returns:
-            dict: Cache entry with 'lyrics', 'lyrics_source', 'translation_source', 
-                  'original_title', and 'translated_title' keys,
-                  or None if not in cache. For backward compatibility, old format (list) is
-                  converted to new format with 'Unknown' sources.
+            dict: {'lines': [str], 'title': str, 'label': str}
         """
-        cached = self.cache.get(song_id)
-        if cached:
-            # Handle backward compatibility: old cache format was just a list
-            if isinstance(cached, list):
-                # Convert old format to new format
-                try:
-                    cached.sort(key=lambda x: int(x['startTimeMs']))
-                except Exception as e:
-                    logger.debug(f"get_cached_lyrics: Sort failed: {e}")
-                return {
-                    'lyrics': cached,
-                    'lyrics_source': 'Unknown',
-                    'translation_source': 'Unknown',
-                    'original_title': None,
-                    'translated_title': None,
-                    'synced': True  # Default to True for backward compatibility
-                }
-            # New format: dict with lyrics, lyrics_source, translation_source, and title info
-            elif isinstance(cached, dict):
-                lyrics = cached.get('lyrics', [])
-                try:
-                    lyrics.sort(key=lambda x: int(x['startTimeMs']))
-                except Exception as e:
-                    logger.debug(f"get_cached_lyrics: Sort failed: {e}")
-                return {
-                    'lyrics': lyrics,
-                    'lyrics_source': cached.get('lyrics_source', 'Unknown'),
-                    'translation_source': cached.get('translation_source', 'Unknown'),
-                    'original_title': cached.get('original_title'),
-                    'translated_title': cached.get('translated_title'),
-                    'synced': cached.get('synced', True)  # Get synced status from cache
-                }
+        with self._lock:
+            entry = self.cache.get(self._key(song_id, source))
+            if not isinstance(entry, dict):
+                return None
+            cached = entry.get('translations', {}).get(f"{self.translator_id()}|{self.target_language}")
+        if cached and len(cached.get('lines', [])) == line_count:
+            return cached
         return None
-    
-    def translate_song_title(self, song_title: str, song_id: str) -> str:
+
+    def put_translation(self, song_id: str, source: str, translator_id: str, target_language: str, translation: dict):
+        with self._lock:
+            entry = self.cache.get(self._key(song_id, source))
+            if not isinstance(entry, dict):
+                return
+            entry.setdefault('translations', {})[f"{translator_id}|{target_language}"] = translation
+            self.save_cache()
+
+    def provided_translation(self, lyrics_data: List[dict]) -> Optional[List[str]]:
+        """The translation shipped with the lyrics, if it is in the target language."""
+        if self.target_language != provided_translations.LANGUAGE:
+            return None
+        provided = [line.get('provided', '') for line in lyrics_data]
+        return provided if any(p.strip() for p in provided) else None
+
+    def translate_song_title(self, song_title: str) -> str:
         """Translate a song title using the current translation client.
-        
+
         Args:
             song_title: Original song title
-            song_id: Spotify track ID for caching
-            
+
         Returns:
             str: Translated song title or original title if translation fails
         """
         if not song_title or not song_title.strip():
             return song_title
-            
+
         try:
             # Use the translation client to translate the title
             translated_titles = self.translation_client.translate_lines(
@@ -135,126 +153,55 @@ class LyricsManager:
                 return translated_titles[0]
         except Exception as e:
             logger.error(f"Error translating song title: {e}")
-            
+
         # Return original title if translation fails
         return song_title
-    
-    def update_cache_with_title(self, song_id: str, original_title: str, translated_title: str):
-        """Update the cache entry for a song with translated title information.
-        
-        Args:
-            song_id: Spotify track ID
-            original_title: Original song title
-            translated_title: Translated song title
-        """
-        if song_id in self.cache:
-            self.cache[song_id]['original_title'] = original_title
-            self.cache[song_id]['translated_title'] = translated_title
-            self.save_cache()
-        else:
-            # Create a new cache entry with just title info if lyrics aren't cached yet
-            self.cache[song_id] = {
-                'original_title': original_title,
-                'translated_title': translated_title,
-                'lyrics': [],
-                'lyrics_source': 'Unknown',
-                'translation_source': 'Unknown',
-                'synced': True  # Default to True for title-only entries
-            }
-            self.save_cache()
-    
-    def get_cached_title(self, song_id: str) -> tuple:
-        """Get cached translated title for a song.
-        
-        Args:
-            song_id: Spotify track ID
-            
-        Returns:
-            tuple: (original_title, translated_title) or (None, None) if not in cache
-        """
-        cached = self.cache.get(song_id)
-        if cached and 'original_title' in cached and 'translated_title' in cached:
-            return cached.get('original_title'), cached.get('translated_title')
-        return None, None
 
-    def translate_lyrics(self, lyrics_data, song_id, lyrics_source: str = "Unknown", callback=None, song_title: str = None, synced: bool = True):
-        """Translate lyrics using multithreading.
-        
+    def translate_lyrics(self, lyrics_data: List[dict], song_id: str, lyrics_source: str, song_title: str = None) -> dict:
+        """Translate lyrics and cache the result. Runs on a worker thread; raises if translation fails.
+
+        A translation shipped with the lyrics is used as is; the translator fills its gaps. Blank lines are not sent.
+
         Args:
-            lyrics_data: List of lyric lines with startTimeMs and words
+            lyrics_data: List of lyric lines with startTimeMs, words and provided, in display order
             song_id: Spotify track ID for caching
-            lyrics_source: Source name of the lyrics provider (e.g., "Spotify", "LRCLib")
-            callback: Optional callback function to call with results
+            lyrics_source: Source name of the lyrics provider (e.g., "Spotify", "NetEase")
             song_title: Optional song title to translate
-            
+
         Returns:
-            list: Translated lyrics with original and translated text
+            dict: {'lines': [str] (one per lyrics line), 'title': str, 'label': str}
         """
-        # Prepare ordered list of lines
-        ordered = sorted(lyrics_data, key=lambda x: int(x['startTimeMs']))
-        original_lines: List[str] = [line['words'] for line in ordered]
+        client = self.translation_client
+        translator_id = self.translator_id()
+        target_language = self.target_language
 
-        try:
-            translated_lines = self.translation_client.translate_lines(
-                original_lines,
+        provided = self.provided_translation(lyrics_data)
+        missing = [
+            i for i, line in enumerate(lyrics_data)
+            if line['words'].strip() and not (provided and provided[i].strip())
+        ]
+        logger.info(f"Translating '{song_title}' with {translator_id} to {target_language}: {len(missing)} lines"
+                    + (f" ({lyrics_source} provided the rest)" if provided else ""))
+
+        lines = list(provided) if provided else [''] * len(lyrics_data)
+        if missing:
+            translated = client.translate_lines(
+                [lyrics_data[i]['words'] for i in missing],
                 source_lang=None,
-                target_lang=self.target_language,
+                target_lang=target_language,
             )
-        except Exception as e:
-            logger.error(f"Error translating lyrics via client: {e}")
-            # Fallback: keep originals on error
-            translated_lines = original_lines
+            for i, text in zip(missing, translated):
+                lines[i] = text
 
-        # Get translation source name
-        translation_source = "Unknown"
-        try:
-            translation_source = self.translation_client.get_source_name()
-        except Exception as e:
-            logger.error(f"Error getting translation source name: {e}")
-
-        # Translate song title if provided
-        translated_title = None
-        if song_title:
-            translated_title = self.translate_song_title(song_title, song_id)
-
-        # Merge into lyric dicts
-        translated_lyrics = []
-        for src, translated_text in zip(ordered, translated_lines):
-            translated_lyrics.append({
-                'startTimeMs': src['startTimeMs'],
-                'words': src['words'],
-                'translated': translated_text,
-            })
-        
-        # Already ordered
-        
-        # Store in cache with source info, title info, and synced status
-        cache_entry = {
-            'lyrics': translated_lyrics,
-            'lyrics_source': lyrics_source,
-            'translation_source': translation_source,
-            'synced': synced
+        name = client.get_source_name()
+        translation = {
+            'lines': lines,
+            'title': self.translate_song_title(song_title) if song_title else song_title,
+            'label': f"{lyrics_source} + {name}" if provided else name,
         }
-        
-        # Add title info if available
-        if song_title and translated_title:
-            cache_entry['original_title'] = song_title
-            cache_entry['translated_title'] = translated_title
-        
-        self.cache[song_id] = cache_entry
-        
-        # Ensure cache size doesn't exceed limit
-        if len(self.cache) > self.max_cache_size:
-            self.cache.pop(next(iter(self.cache)))
-        
-        self.save_cache()
-        
-        # Call callback if provided
-        if callback:
-            callback(translated_lyrics)
-        
-        return translated_lyrics
-    
+        self.put_translation(song_id, lyrics_source, translator_id, target_language, translation)
+        return translation
+
     @staticmethod
     def get_current_line(lyrics, position_ms):
         """Find the current lyric line based on playback position.
@@ -293,14 +240,14 @@ class LyricsManager:
         else:
             logger.debug(f"get_current_line: Returning line at {result.get('startTimeMs')}ms: '{result.get('words', '')[:50]}...'")
         return current_line
-    
+
     @staticmethod
     def ms_to_min_sec(ms):
         """Convert milliseconds to minutes:seconds format.
-        
+
         Args:
             ms: Time in milliseconds
-            
+
         Returns:
             str: Formatted time string (MM:SS)
         """
@@ -308,4 +255,3 @@ class LyricsManager:
         minutes = ms // 60000
         seconds = (ms % 60000) // 1000
         return f"{minutes}:{seconds:02}"
-

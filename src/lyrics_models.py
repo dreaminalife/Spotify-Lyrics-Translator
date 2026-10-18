@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Dict, Any
 
 
@@ -10,15 +10,24 @@ class TrackMetadata:
     artist_name: str
     album_name: str
     duration_ms: int
+    # Every artist on the track; artist_name is the first one
+    artist_names: List[str] = field(default_factory=list)
+
+    @property
+    def all_artists(self) -> str:
+        """All artists joined with ", ", as the Chinese sources are searched with."""
+        return ", ".join(self.artist_names) if self.artist_names else self.artist_name
 
 
 @dataclass
 class LyricsLine:
     start_time_ms: int
     words: str
+    # Translation shipped with the lyrics (NetEase, QQ Music, Kugou: Simplified Chinese); "" if none
+    provided: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"startTimeMs": int(self.start_time_ms), "words": self.words}
+        return {"startTimeMs": int(self.start_time_ms), "words": self.words, "provided": self.provided}
 
 
 @dataclass
@@ -37,5 +46,3 @@ class LyricsPayload:
             },
             "source": self.source,
         }
-
-

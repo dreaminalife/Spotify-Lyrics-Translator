@@ -287,4 +287,3 @@ class SpotifyClient:
         except Exception as e:
             logger.error(f"Error getting playback state: {e}")
             return None
-

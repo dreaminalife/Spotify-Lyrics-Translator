@@ -1,7 +1,9 @@
 import tkinter as tk
+from pathlib import Path
 from tkinter import ttk, messagebox, colorchooser
 from typing import Callable, Dict, Optional
 
+from .logging_config import get_logger
 from .settings_manager import read_secrets, save_secrets, validate_secrets
 from .translation_settings import (
     read_translation_settings,
@@ -10,9 +12,16 @@ from .translation_settings import (
     save_models_config,
     DEFAULT_PROMPT,
     DEFAULT_MODEL_PARAMS,
+    TARGET_LANGUAGES,
+    FLOATING_LINE_COUNTS,
+    FLOATING_STYLES,
+    FLOATING_MIN_OPACITY,
 )
+from .lyrics_service import DEFAULT_ORDER, resolve_order
 from .translation_clients import fetch_openrouter_models, format_model_display
 from .font_manager import get_available_fonts, get_default_chinese_font
+
+logger = get_logger(__name__)
 
 def get_selected_font():
     """Get the currently selected font from settings."""
@@ -83,6 +92,61 @@ class SettingsWindow(tk.Toplevel):
             entry.grid(row=row, column=1, sticky="ew", pady=(0, 6))
             row += 1
 
+        login_btn = tk.Button(
+            tab_spotify,
+            text="Log in to Spotify",
+            bg=self.theme["button_bg"],
+            fg=self.theme["button_fg"],
+            relief=tk.FLAT,
+            padx=10,
+            pady=6,
+            cursor="hand2",
+            font=(get_selected_font(), 10, 'normal'),
+        )
+        login_btn.grid(row=row - 1, column=2, sticky="w", padx=(6, 0), pady=(0, 6))
+
+        def on_login():
+            import subprocess
+            import sys
+            import threading
+
+            login_btn.configure(state=tk.DISABLED, text="Logging in…")
+
+            def worker():
+                # Its own process: pywebview needs the main thread, which Tk has
+                try:
+                    result = subprocess.run(
+                        [sys.executable, "-m", "src.spotify_login"],
+                        cwd=Path(__file__).resolve().parent.parent,
+                        capture_output=True,
+                        text=True,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                    )
+                    sp_dc = result.stdout.strip()
+                    if result.returncode != 0:
+                        logger.error(f"Spotify login failed: {result.stderr.strip()}")
+                except Exception as e:
+                    logger.error(f"Spotify login failed: {e}")
+                    sp_dc = ""
+
+                def on_ui():
+                    if not self.winfo_exists():
+                        return
+                    login_btn.configure(state=tk.NORMAL, text="Log in to Spotify")
+                    if sp_dc:
+                        logger.info("Captured sp_dc from Spotify login")
+                        self.vars["sp_dc_cookie"].set(sp_dc)
+                        messagebox.showinfo("Spotify", "Logged in. Press Save to keep the cookie.", parent=self)
+
+                try:
+                    self.after(0, on_ui)
+                except Exception:
+                    pass
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        login_btn.configure(command=on_login)
+
         tab_spotify.grid_columnconfigure(1, weight=1)
 
         # Translation Tab
@@ -95,11 +159,16 @@ class SettingsWindow(tk.Toplevel):
         provider_combo = ttk.Combobox(tab_translation, textvariable=provider_var, values=["Google Translate", "OpenRouter"], state="readonly")
         provider_combo.grid(row=0, column=1, sticky="ew", pady=(0, 6))
 
-        # Target language
-        target_lang_var = tk.StringVar(value=tsettings.get("target_language", "en"))
-        tk.Label(tab_translation, text="Target Language (e.g., en)", bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 10, 'normal')).grid(row=1, column=0, sticky="w")
-        target_lang_entry = tk.Entry(tab_translation, textvariable=target_lang_var, bg=self.theme["entry_bg"], fg=self.theme["entry_fg"], insertbackground=self.theme["entry_fg"], relief=tk.FLAT)
-        target_lang_entry.grid(row=1, column=1, sticky="ew", pady=(0, 6))
+        # Target language: shown by name, stored by code
+        language_display_to_code = {f"{name} ({code})": code for code, name in TARGET_LANGUAGES}
+        current_target = tsettings.get("target_language", "en")
+        if current_target not in language_display_to_code.values():
+            # Keep a code typed in before the list existed
+            language_display_to_code[current_target] = current_target
+        target_lang_var = tk.StringVar(value=next(d for d, c in language_display_to_code.items() if c == current_target))
+        tk.Label(tab_translation, text="Target Language", bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 10, 'normal')).grid(row=1, column=0, sticky="w")
+        target_lang_combo = ttk.Combobox(tab_translation, textvariable=target_lang_var, values=list(language_display_to_code), state="readonly")
+        target_lang_combo.grid(row=1, column=1, sticky="ew", pady=(0, 6))
 
         # OpenRouter API key
         openrouter_key_var = tk.StringVar(value=current.get("openrouter_api_key", ""))
@@ -432,6 +501,56 @@ class SettingsWindow(tk.Toplevel):
         prompt_text.grid(row=5, column=1, sticky="nsew")
         prompt_text.insert("1.0", tsettings.get("global_prompt", DEFAULT_PROMPT))
 
+        # Auto-translate: off, songs are only sent to OpenRouter when refreshed; cached translations still show
+        auto_translate_var = tk.BooleanVar(value=tsettings.get("openrouter_auto_translate", True))
+        auto_translate_label = tk.Label(tab_translation, text="Translate every song", bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 10, 'normal'))
+        auto_translate_label.grid(row=6, column=0, sticky="w", pady=(6, 0))
+        auto_translate_check = tk.Checkbutton(
+            tab_translation,
+            text="Otherwise press Refresh Lyrics to translate a song",
+            variable=auto_translate_var,
+            bg=self.theme["panel"],
+            fg=self.theme["label_fg"],
+            activebackground=self.theme["panel"],
+            selectcolor=self.theme["entry_bg"],
+            font=(get_selected_font(), 10, 'normal'),
+        )
+        auto_translate_check.grid(row=6, column=1, sticky="w", pady=(6, 0))
+
+        # Languages OpenRouter doesn't auto-translate, by base code ("zh" for both Chinese)
+        skip_label = tk.Label(tab_translation, text="Don't auto-translate", bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 10, 'normal'))
+        skip_label.grid(row=7, column=0, sticky="nw", pady=(6, 0))
+        skip_frame = tk.Frame(tab_translation, bg=self.theme["panel"])
+        skip_frame.grid(row=7, column=1, columnspan=2, sticky="w", pady=(6, 0))
+        skipped = set(tsettings.get("openrouter_skip_languages") or [])
+        skip_vars: Dict[str, tk.BooleanVar] = {}
+        skip_checks = []
+        for code, name in TARGET_LANGUAGES:
+            base = code.split("-")[0]
+            if base in skip_vars:
+                continue
+            skip_vars[base] = tk.BooleanVar(value=base in skipped)
+            check = tk.Checkbutton(
+                skip_frame,
+                text="Chinese" if base == "zh" else name,
+                variable=skip_vars[base],
+                bg=self.theme["panel"],
+                fg=self.theme["label_fg"],
+                activebackground=self.theme["panel"],
+                selectcolor=self.theme["entry_bg"],
+                font=(get_selected_font(), 9, 'normal'),
+            )
+            check.grid(row=len(skip_checks) // 5, column=len(skip_checks) % 5, sticky="w")
+            skip_checks.append(check)
+
+        def update_skip_state(*_):
+            state = tk.NORMAL if auto_translate_var.get() else tk.DISABLED
+            for check in skip_checks:
+                check.configure(state=state)
+
+        auto_translate_var.trace_add("write", update_skip_state)
+        update_skip_state()
+
         def toggle_openrouter_settings():
             """Toggle visibility of OpenRouter-specific settings based on provider selection."""
             is_openrouter = provider_var.get() == "OpenRouter"
@@ -441,7 +560,9 @@ class SettingsWindow(tk.Toplevel):
                 openrouter_key_label, openrouter_key_entry,
                 model_label, model_combo, refresh_models_btn,
                 body_label, body_text,
-                prompt_label, prompt_text
+                prompt_label, prompt_text,
+                auto_translate_label, auto_translate_check,
+                skip_label, skip_frame,
             ]
 
             for widget in widgets_to_toggle:
@@ -474,7 +595,13 @@ class SettingsWindow(tk.Toplevel):
             translation_settings = {
                 "provider": provider_var.get(),
                 "selected_model": selected_model_id,
-                "target_language": target_lang_var.get().strip() or "en",
+                "target_language": language_display_to_code.get(target_lang_var.get(), "en"),
+                "openrouter_auto_translate": auto_translate_var.get(),
+                "openrouter_skip_languages": [code for code, var in skip_vars.items() if var.get()],
+                "floating_lines": floating_lines_var.get(),
+                "floating_translation_only": floating_translation_only_var.get(),
+                "floating_style": floating_style_var.get(),
+                "floating_opacity": round(floating_opacity_var.get(), 2),
                 "global_prompt": prompt_text.get("1.0", tk.END).strip() or DEFAULT_PROMPT,
                 "selected_font": font_var.get(),
                 "font_size": font_size_var.get(),
@@ -543,6 +670,12 @@ class SettingsWindow(tk.Toplevel):
                 translation_settings["main_bg_color"] = tsettings.get("main_bg_color", "#121212")
                 translation_settings["floating_bg_color"] = tsettings.get("floating_bg_color", "#181818")
             
+            # A new order, or a reset, replaces the source picked on the main window
+            new_order = list(source_listbox.get(0, tk.END))
+            if new_order != initial_order or sources_reset[0]:
+                translation_settings["lyrics_source_order"] = [] if new_order == DEFAULT_ORDER else new_order
+                translation_settings["pinned_lyrics_source"] = None
+
             save_translation_settings(translation_settings)
 
             # Save model body
@@ -748,6 +881,130 @@ class SettingsWindow(tk.Toplevel):
         floating_font_bold_var.trace_add("write", update_floating_preview)
 
         tab_font.grid_columnconfigure(1, weight=1)
+
+        # Lyrics Sources Tab: the order sources are tried in
+        tab_sources = tk.Frame(notebook, bg=self.theme["panel"], padx=20, pady=20)
+        notebook.add(tab_sources, text="Lyrics Sources")
+
+        tk.Label(
+            tab_sources,
+            text="Sources are tried from the top until one has the song's lyrics.",
+            bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 10, 'normal'),
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+
+        initial_order = resolve_order(tsettings.get("lyrics_source_order"), None)
+        source_listbox = tk.Listbox(
+            tab_sources,
+            height=len(DEFAULT_ORDER),
+            bg=self.theme["entry_bg"],
+            fg=self.theme["entry_fg"],
+            selectbackground=self.theme["accent"],
+            activestyle="none",
+            highlightthickness=0,
+            relief=tk.FLAT,
+            exportselection=False,
+            font=(get_selected_font(), 11, 'normal'),
+        )
+        for name in initial_order:
+            source_listbox.insert(tk.END, name)
+        source_listbox.grid(row=1, column=0, sticky="nsew")
+
+        source_buttons = tk.Frame(tab_sources, bg=self.theme["panel"])
+        source_buttons.grid(row=1, column=1, sticky="n", padx=(10, 0))
+
+        def move_source(delta: int):
+            selection = source_listbox.curselection()
+            if not selection:
+                return
+            i = selection[0]
+            j = i + delta
+            if not 0 <= j < source_listbox.size():
+                return
+            name = source_listbox.get(i)
+            source_listbox.delete(i)
+            source_listbox.insert(j, name)
+            source_listbox.selection_set(j)
+            source_listbox.see(j)
+
+        # Set by Reset to default, which unpins even when the order already was the default
+        sources_reset = [False]
+
+        def reset_sources():
+            sources_reset[0] = True
+            source_listbox.delete(0, tk.END)
+            for name in DEFAULT_ORDER:
+                source_listbox.insert(tk.END, name)
+
+        for text, command in (("Up", lambda: move_source(-1)), ("Down", lambda: move_source(1)), ("Reset to default", reset_sources)):
+            tk.Button(
+                source_buttons, text=text, command=command,
+                bg=self.theme["button_bg"], fg=self.theme["button_fg"], relief=tk.FLAT, padx=10, pady=6,
+                cursor="hand2", font=(get_selected_font(), 10, 'normal'),
+            ).pack(fill=tk.X, pady=(0, 6))
+
+        pinned = tsettings.get("pinned_lyrics_source")
+        if pinned:
+            tk.Label(
+                tab_sources,
+                text=f"{pinned} is tried first, as picked on the main window. Changing the order here undoes that.",
+                bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 10, 'normal'),
+                wraplength=420, justify='left',
+            ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(10, 0))
+
+        tab_sources.grid_columnconfigure(0, weight=1)
+
+        # Floating Lyrics Tab
+        tab_floating = tk.Frame(notebook, bg=self.theme["panel"], padx=20, pady=20)
+        notebook.add(tab_floating, text="Floating Lyrics")
+
+        def floating_label(text, row):
+            tk.Label(tab_floating, text=text, bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 10, 'normal')).grid(row=row, column=0, sticky="w", pady=(0, 6))
+
+        floating_lines_var = tk.IntVar(value=tsettings.get("floating_lines", 1) if tsettings.get("floating_lines", 1) in FLOATING_LINE_COUNTS else 1)
+        floating_label("Lines", 0)
+        ttk.Combobox(tab_floating, textvariable=floating_lines_var, values=FLOATING_LINE_COUNTS, state="readonly", width=6).grid(row=0, column=1, sticky="w", pady=(0, 6))
+
+        floating_translation_only_var = tk.BooleanVar(value=tsettings.get("floating_translation_only", False))
+        floating_label("Translation only", 1)
+        tk.Checkbutton(
+            tab_floating,
+            text="Show the original where there is no translation",
+            variable=floating_translation_only_var,
+            bg=self.theme["panel"], fg=self.theme["label_fg"], activebackground=self.theme["panel"],
+            selectcolor=self.theme["entry_bg"], font=(get_selected_font(), 10, 'normal'),
+        ).grid(row=1, column=1, sticky="w", pady=(0, 6))
+
+        floating_style_var = tk.StringVar(value=tsettings.get("floating_style", "Dark") if tsettings.get("floating_style") in FLOATING_STYLES else "Dark")
+        floating_label("Style", 2)
+        ttk.Combobox(tab_floating, textvariable=floating_style_var, values=FLOATING_STYLES, state="readonly", width=10).grid(row=2, column=1, sticky="w", pady=(0, 6))
+        tk.Label(
+            tab_floating,
+            text="Dark uses the floating window colors from the Appearance tab. Clear has no background.",
+            bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 9, 'normal'),
+        ).grid(row=3, column=1, sticky="w", pady=(0, 10))
+
+        floating_opacity_var = tk.DoubleVar(value=tsettings.get("floating_opacity", 0.9))
+        floating_label("Opacity", 4)
+        tk.Scale(
+            tab_floating,
+            from_=FLOATING_MIN_OPACITY,
+            to=1.0,
+            resolution=0.05,
+            orient=tk.HORIZONTAL,
+            variable=floating_opacity_var,
+            bg=self.theme["panel"],
+            fg=self.theme["label_fg"],
+            troughcolor=self.theme["entry_bg"],
+            highlightbackground=self.theme["panel"],
+        ).grid(row=4, column=1, sticky="ew", pady=(0, 6))
+
+        tk.Label(
+            tab_floating,
+            text="To let clicks pass through the floating window, use View > Lock Floating Lyrics in the main window.",
+            bg=self.theme["panel"], fg=self.theme["label_fg"], font=(get_selected_font(), 9, 'normal'),
+        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(10, 0))
+
+        tab_floating.grid_columnconfigure(1, weight=1)
 
         # Appearance Tab
         tab_appearance = tk.Frame(notebook, bg=self.theme["panel"])

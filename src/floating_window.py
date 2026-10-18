@@ -1,13 +1,34 @@
 """Floating lyrics window implementation."""
+import ctypes
+import sys
 import tkinter as tk
 from tkinter import ttk
 import threading
-from .translation_settings import read_translation_settings, save_translation_settings, get_theme_colors
+from .translation_settings import (
+    read_translation_settings,
+    save_translation_settings,
+    get_theme_colors,
+    FLOATING_LINE_COUNTS,
+    FLOATING_STYLES,
+    FLOATING_MIN_OPACITY,
+)
 from .font_manager import get_default_chinese_font
 from .logging_config import get_logger
 import time
 
 logger = get_logger(__name__)
+
+# Light style background
+LIGHT_BG = "#FFFFFF"
+# Clear style: the see-through color
+CLEAR_KEY = "#010101"
+# Clear style: buttons and the window edge, which must stay clickable; see-through pixels pass clicks through
+CLEAR_HANDLE = "#1A1A1A"
+# Win32 extended window styles used to let clicks pass through a locked window
+GWL_EXSTYLE = -20
+WS_EX_LAYERED = 0x80000
+WS_EX_TRANSPARENT = 0x20
+LWA_ALPHA = 0x2
 
 
 class FloatingLyricsWindow:
@@ -138,8 +159,6 @@ class FloatingLyricsWindow:
         # Calculate font styles based on settings
         song_font_style = 'bold' if self.font_bold else 'normal'
         artist_font_style = 'normal' if self.font_bold else 'normal'  # Artist stays normal
-        original_font_style = 'normal'  # Original lyrics stay normal for readability
-        translated_font_style = 'bold' if self.font_bold else 'normal'
 
         # Song title with modern typography
         self.song_label = tk.Label(
@@ -169,37 +188,16 @@ class FloatingLyricsWindow:
         self.artist_label.bind('<Motion>', self.on_motion)
         self.artist_label.bind('<Button-1>', self.start_drag)
 
-        # Original lyrics with larger font
-        self.original_label = tk.Label(
-            self.main_frame,
-            text="",
-            font=(self.selected_font, self.font_size + 6, original_font_style),
-            bg=self.background_color,
-            fg=self.theme_colors.get("floating_original_fg", SPOTIFY_WHITE),
-            anchor='w',
-            wraplength=750,
-            justify='left'
-        )
-        self.original_label.pack(fill=tk.X, pady=(0, 8))
-        # Bind Motion to label for cursor updates
-        self.original_label.bind('<Motion>', self.on_motion)
-        self.original_label.bind('<Button-1>', self.start_drag)
-
-        # Translated lyrics with styling
-        self.translated_label = tk.Label(
-            self.main_frame,
-            text="",
-            font=(self.selected_font, self.font_size + 2, translated_font_style),
-            bg=self.background_color,
-            fg=self.theme_colors.get("floating_translated_fg", SPOTIFY_WHITE),
-            anchor='w',
-            wraplength=750,
-            justify='left'
-        )
-        self.translated_label.pack(fill=tk.X, pady=(4, 10))  # Added padding top and bottom to prevent clipping
-        # Bind Motion to label for cursor updates
-        self.translated_label.bind('<Motion>', self.on_motion)
-        self.translated_label.bind('<Button-1>', self.start_drag)
+        # Lyric rows: the line playing now in the middle, with neighbours above and below when showing 3 or 5.
+        # Each row is (main label, second label); the middle row's labels are original_label/translated_label.
+        self.lines_frame = tk.Frame(self.main_frame, bg=self.background_color)
+        self.lines_frame.pack(fill=tk.X)
+        self.lines_frame.bind('<Motion>', self.on_motion)
+        self.lines_frame.bind('<Button-1>', self.start_drag)
+        self.rows = []
+        self.locked = False
+        self._load_options(settings)
+        self._build_rows()
 
         # Playback controls container (below lyrics, centered)
         self.controls_frame = tk.Frame(self.main_frame, bg=self.background_color)
@@ -232,10 +230,10 @@ class FloatingLyricsWindow:
         icon_font = (self.selected_font, max(10, self.font_size - 2), 'bold')
 
         # Left side: Seek backward button (with text label)
-        seek_back_frame = tk.Frame(self.controls_center, bg=self.background_color)
-        seek_back_frame.pack(side=tk.LEFT, padx=(0, 6))
+        self.seek_back_frame = tk.Frame(self.controls_center, bg=self.background_color)
+        self.seek_back_frame.pack(side=tk.LEFT, padx=(0, 6))
         self.seek_back_button = tk.Button(
-            seek_back_frame,
+            self.seek_back_frame,
             text="−10s",
             font=button_font,
             bg=button_bg,
@@ -308,10 +306,10 @@ class FloatingLyricsWindow:
         self.next_button.pack(side=tk.LEFT, padx=(3, 6))
 
         # Right side: Seek forward button (with text label)
-        seek_forward_frame = tk.Frame(self.controls_center, bg=self.background_color)
-        seek_forward_frame.pack(side=tk.LEFT)
+        self.seek_forward_frame = tk.Frame(self.controls_center, bg=self.background_color)
+        self.seek_forward_frame.pack(side=tk.LEFT)
         self.seek_forward_button = tk.Button(
-            seek_forward_frame,
+            self.seek_forward_frame,
             text="+10s",
             font=button_font,
             bg=button_bg,
@@ -327,9 +325,6 @@ class FloatingLyricsWindow:
         )
         self.seek_forward_button.pack()
 
-        # Current line data
-        self.current_line = None
-
         # Set initial wraplength based on window width
         self._update_wraplength(_init_w)
 
@@ -337,7 +332,7 @@ class FloatingLyricsWindow:
         self.apply_colors()
 
         # Start fade-in animation
-        self.fade_in()
+        self.fade_in(target_alpha=self.target_alpha)
     
     def start_drag(self, event):
         """Start dragging or resizing the window.
@@ -523,8 +518,9 @@ class FloatingLyricsWindow:
         """
         # Account for padding (25px on each side from main_frame)
         available_width = window_width - 50
-        self.original_label.config(wraplength=available_width)
-        self.translated_label.config(wraplength=available_width)
+        for main, second in self.rows:
+            main.config(wraplength=available_width)
+            second.config(wraplength=available_width)
 
     def _get_relative_coordinates(self, event):
         """Get mouse coordinates relative to the toplevel window.
@@ -570,13 +566,105 @@ class FloatingLyricsWindow:
 
         return btn_x <= x_root <= btn_x + btn_w and btn_y <= y_root <= btn_y + btn_h
 
-    def update_lyrics(self, song_name, artist_name=None, current_line=None, position_ms=0, duration_ms=0, translated_title=None):
+    def _load_options(self, settings):
+        """Read the floating window options (lines, translation only, style, opacity) from settings."""
+        count = settings.get("floating_lines", 1)
+        self.line_count = count if count in FLOATING_LINE_COUNTS else 1
+        self.translation_only = bool(settings.get("floating_translation_only", False))
+        style = settings.get("floating_style", "Dark")
+        self.style = style if style in FLOATING_STYLES else "Dark"
+        try:
+            opacity = float(settings.get("floating_opacity", 0.9))
+        except (TypeError, ValueError):
+            opacity = 0.9
+        # Clear has no background to make translucent
+        self.target_alpha = 1.0 if self.style == "Clear" else max(FLOATING_MIN_OPACITY, min(1.0, opacity))
+
+    def _style_colors(self):
+        """Background and text colors for the current style. Dark uses the Appearance settings."""
+        theme = self.theme_colors
+        if self.style == "Light":
+            return {
+                "bg": LIGHT_BG, "border": "#DDDDDD", "title_fg": "#121212", "artist_fg": "#555555",
+                "original_fg": "#121212", "translated_fg": "#333333", "close_bg": LIGHT_BG, "close_fg": "#555555",
+                "button_bg": LIGHT_BG, "button_fg": "#121212",
+            }
+        colors = {
+            "bg": theme.get("floating_bg", "#181818"),
+            "border": theme.get("floating_border", "#1DB954"),
+            "title_fg": theme.get("floating_title_fg", "#1DB954"),
+            "artist_fg": theme.get("floating_artist_fg", "#B3B3B3"),
+            "original_fg": theme.get("floating_original_fg", "#FFFFFF"),
+            "translated_fg": theme.get("floating_translated_fg", "#FFFFFF"),
+            "close_bg": theme.get("floating_close_bg", theme.get("floating_bg", "#181818")),
+            "close_fg": theme.get("floating_close_fg", "#B3B3B3"),
+            "button_bg": theme.get("floating_button_bg", theme.get("floating_bg", "#181818")),
+            "button_fg": theme.get("floating_button_fg", theme.get("floating_original_fg", "#FFFFFF")),
+        }
+        if self.style == "Clear":
+            # Every pixel in this color is see-through (Windows); near black, so anti-aliased edges read as a shadow
+            colors.update({"bg": CLEAR_KEY, "border": CLEAR_HANDLE, "close_bg": CLEAR_HANDLE, "button_bg": CLEAR_HANDLE})
+        return colors
+
+    def _row_fonts(self, is_current):
+        """Fonts of a row's main and second label."""
+        second_style = 'bold' if self.font_bold else 'normal'
+        if is_current:
+            return (self.selected_font, self.font_size + 6, 'normal'), (self.selected_font, self.font_size + 2, second_style)
+        return (self.selected_font, self.font_size + 2, 'normal'), (self.selected_font, self.font_size, second_style)
+
+    def _build_rows(self):
+        """(Re)create one row per shown line; the middle row is the line playing now."""
+        for main, second in self.rows:
+            main.destroy()
+            second.destroy()
+        self.rows = []
+        # Every row has room for a translation when showing several, so the window keeps its height from line to line
+        show_second = not self.translation_only
+        for i in range(self.line_count):
+            is_current = i == self.line_count // 2
+            main_font, second_font = self._row_fonts(is_current)
+            main = tk.Label(self.lines_frame, text="", font=main_font, bg=self.background_color, anchor='w', justify='left')
+            second = tk.Label(self.lines_frame, text="", font=second_font, bg=self.background_color, anchor='w', justify='left')
+            main.pack(fill=tk.X, pady=(0, 2) if show_second else (0, 6))
+            if show_second:
+                second.pack(fill=tk.X, pady=(0, 8))
+            for label in (main, second):
+                label.bind('<Motion>', self.on_motion)
+                label.bind('<Button-1>', self.start_drag)
+            self.rows.append((main, second))
+        self.original_label, self.translated_label = self.rows[self.line_count // 2]
+        self._built_layout = (self.line_count, self.translation_only)
+        try:
+            self._update_wraplength(self.window.winfo_width())
+        except Exception:
+            pass
+
+    def _row_texts(self, lyrics, index):
+        """(main, second) texts of the rows around line index, that line in the middle; rows off the lyrics are blank."""
+        half = self.line_count // 2
+        texts = []
+        for i in range(index - half, index + half + 1):
+            if not lyrics or not 0 <= i < len(lyrics):
+                texts.append(("", ""))
+                continue
+            original = lyrics[i].get('words', '')
+            translation = (lyrics[i].get('translated') or '').strip()
+            if self.translation_only:
+                # No translation (yet, or the song is already in the target language): the original beats an empty row
+                texts.append((translation or original, ""))
+            else:
+                texts.append((original, translation))
+        return texts
+
+    def update_lyrics(self, song_name, artist_name=None, lyrics=None, index=-1, position_ms=0, duration_ms=0, translated_title=None):
         """Update the displayed lyrics.
 
         Args:
             song_name: Name of the current song
             artist_name: Name of the artist (optional)
-            current_line: Dictionary with 'words' and 'translated' keys, or None
+            lyrics: List of dicts with 'words' and 'translated' keys, or None to show no lyrics
+            index: Index of the line playing now in lyrics; -1 before the first line
             position_ms: Current playback position in milliseconds
             duration_ms: Total song duration in milliseconds
             translated_title: Optional translated song title
@@ -599,36 +687,37 @@ class FloatingLyricsWindow:
             self.song_label.config(text="No song playing")
             self.artist_label.config(text="")
 
-        if current_line:
-            original_text = current_line.get('words', '')
-            translated_text = current_line.get('translated', '')
+        current = self.line_count // 2
+        for i, ((main_label, second_label), (main_text, second_text)) in enumerate(zip(self.rows, self._row_texts(lyrics, index))):
+            if i == current:
+                # Add text transition effect
+                self._transition_text(main_label, main_text, self.colors["original_fg"])
+                self._transition_text(second_label, second_text, self.colors["translated_fg"])
+            else:
+                main_label.config(text=main_text)
+                second_label.config(text=second_text)
 
-            # Add text transition effect
-            self._transition_text(self.original_label, original_text)
-            self._transition_text(self.translated_label, translated_text)
-            self.current_line = current_line
-        else:
-            self._transition_text(self.original_label, "")
-            self._transition_text(self.translated_label, "")
-            self.current_line = None
-    
-    def _transition_text(self, label, new_text, steps=3):
+    def _transition_text(self, label, new_text, color, steps=3):
         """Smoothly transition text in a label.
-        
+
         Args:
             label: The label to update
             new_text: The new text to display
+            color: The label's text color once the transition ends
             steps: Number of steps for the transition
         """
         current_text = label.cget("text")
         if current_text == new_text:
             return
-            
+        if self.style == "Clear":
+            # Blending toward the see-through color would flash dark text
+            label.config(text=new_text, fg=color)
+            return
+
         # Fade out
         def fade_out(step=0):
             if step < steps:
-                alpha = 1.0 - (step / steps)
-                label.config(fg=self._adjust_color_alpha(label.cget("fg"), alpha))
+                label.config(fg=self._adjust_color_alpha(color, 1.0 - (step / steps)))
                 label.after(0, lambda: fade_out(step + 1))
             else:
                 # Change text
@@ -639,19 +728,14 @@ class FloatingLyricsWindow:
         # Fade in
         def fade_in(step=0):
             if step < steps:
-                alpha = step / steps
-                label.config(fg=self._adjust_color_alpha(label.cget("fg"), alpha))
+                label.config(fg=self._adjust_color_alpha(color, step / steps))
                 label.after(0, lambda: fade_in(step + 1))
             else:
-                # Reset to full color and correct font
-                if label == self.original_label:
-                    label.config(fg='#FFFFFF')
-                else:
-                    translated_font_style = 'bold' if self.font_bold else 'normal'
-                    label.config(fg='#FFFFFF', font=(self.selected_font, self.font_size + 2, translated_font_style))
-        
+                # Reset to full color
+                label.config(fg=color)
+
         fade_out()
-    
+
     def _adjust_color_alpha(self, hex_color, alpha):
         """Adjust the alpha of a hex color by blending with background.
 
@@ -667,7 +751,7 @@ class FloatingLyricsWindow:
         r, g, b = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
 
         # Use actual floating background color for blending
-        bg_color = self.theme_colors.get("floating_bg", "#181818").lstrip('#')
+        bg_color = self.colors["bg"].lstrip('#')
         bg_r, bg_g, bg_b = tuple(int(bg_color[i:i+2], 16) for i in (0, 2, 4))
 
         # Blend with background based on alpha
@@ -680,7 +764,7 @@ class FloatingLyricsWindow:
 
     def fade_in(self, step=0.05, target_alpha=0.9):
         """Fade in the window with a smooth animation.
-        
+
         Args:
             step: Increment for alpha value in each step
             target_alpha: Target alpha value for the window
@@ -690,7 +774,34 @@ class FloatingLyricsWindow:
             new_alpha = min(current_alpha + step, target_alpha)
             self.window.attributes('-alpha', new_alpha)
             self.window.after(20, lambda: self.fade_in(step, target_alpha))
-    
+        else:
+            # Changing the alpha can drop the click-through style
+            self._apply_lock()
+
+    def set_locked(self, locked):
+        """Lock: clicks pass through the window to whatever is underneath (Windows only)."""
+        self.locked = locked
+        self._apply_lock()
+
+    def _apply_lock(self):
+        if sys.platform != "win32" or not self.is_open():
+            return
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = int(self.window.wm_frame(), 16)
+            style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            if self.locked:
+                if not style & WS_EX_LAYERED:
+                    # Tk drops the layered style at full opacity; a layered window stays hidden until given an alpha
+                    user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED)
+                    user32.SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA)
+                    style |= WS_EX_LAYERED
+                user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_TRANSPARENT)
+            else:
+                user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style & ~WS_EX_TRANSPARENT)
+        except Exception as e:
+            logger.warning(f"Could not change floating window lock: {e}")
+
     def fade_out(self, step=0.05, callback=None):
         """Fade out the window with a smooth animation.
         
@@ -762,27 +873,46 @@ class FloatingLyricsWindow:
         # Calculate font styles based on settings
         song_font_style = 'bold'  # Song title always bold
         artist_font_style = 'normal'  # Artist stays normal for subtlety
-        original_font_style = 'normal'  # Original lyrics stay normal for readability
-        translated_font_style = 'bold' if is_bold else 'normal'
 
         # Apply font settings with appropriate scaling
         self.song_label.config(font=(font_name, font_size, song_font_style))
         self.artist_label.config(font=(font_name, max(8, font_size - 2), artist_font_style))
         if hasattr(self, 'close_button') and self.close_button:
             self.close_button.config(font=(font_name, max(10, font_size - 2), 'normal'))
-        self.original_label.config(font=(font_name, font_size + 6, original_font_style))
-        self.translated_label.config(font=(font_name, font_size + 2, translated_font_style))
+        current = len(self.rows) // 2
+        for i, (main, second) in enumerate(self.rows):
+            main_font, second_font = self._row_fonts(i == current)
+            main.config(font=main_font)
+            second.config(font=second_font)
 
     def apply_colors(self):
-        """Apply all theme colors to the floating window."""
-        # Reload theme colors
+        """Apply the floating window options (lines, style, opacity) and theme colors to the window."""
+        # Reload options and theme colors
+        self._load_options(read_translation_settings())
         self.theme_colors = get_theme_colors()
-        self.background_color = self.theme_colors.get("floating_bg", "#181818")
+        self.colors = self._style_colors()
+        self.background_color = self.colors["bg"]
 
-        # Update window background and border
+        if getattr(self, '_built_layout', None) != (self.line_count, self.translation_only):
+            self._build_rows()
+            # Grow the window to fit more rows; never shrink what the user sized
+            try:
+                self.window.update_idletasks()
+                needed = self.window.winfo_reqheight()
+                if needed > self.window.winfo_height():
+                    self.window.geometry(f"{self.window.winfo_width()}x{needed}")
+            except Exception:
+                pass
+
+        # Update window background, border and see-through color
         try:
             self.window.configure(bg=self.background_color)
-            self.window.configure(highlightbackground=self.theme_colors.get("floating_border", "#1DB954"))
+            # In Clear, the border is what can be grabbed to resize, so it spans the whole resize margin
+            self.window.configure(
+                highlightbackground=self.colors["border"],
+                highlightthickness=self.resize_margin if self.style == "Clear" else 1,
+            )
+            self.window.attributes('-transparentcolor', CLEAR_KEY if self.style == "Clear" else '')
         except Exception:
             pass
 
@@ -791,9 +921,12 @@ class FloatingLyricsWindow:
             getattr(self, 'main_frame', None),
             getattr(self, 'gradient_frame', None),
             getattr(self, 'title_frame', None),
+            getattr(self, 'lines_frame', None),
             getattr(self, 'controls_frame', None),
             getattr(self, 'controls_center', None),
             getattr(self, 'bottom_spacer', None),
+            getattr(self, 'seek_back_frame', None),
+            getattr(self, 'seek_forward_frame', None),
         ]
 
         for widget in background_widgets:
@@ -807,75 +940,52 @@ class FloatingLyricsWindow:
         # Update foreground colors for labels
         try:
             if hasattr(self, 'song_label') and self.song_label:
-                self.song_label.configure(
-                    bg=self.background_color,
-                    fg=self.theme_colors.get("floating_title_fg", "#1DB954")
-                )
+                self.song_label.configure(bg=self.background_color, fg=self.colors["title_fg"])
             if hasattr(self, 'artist_label') and self.artist_label:
-                self.artist_label.configure(
-                    bg=self.background_color,
-                    fg=self.theme_colors.get("floating_artist_fg", "#B3B3B3")
-                )
-            if hasattr(self, 'original_label') and self.original_label:
-                self.original_label.configure(
-                    bg=self.background_color,
-                    fg=self.theme_colors.get("floating_original_fg", "#FFFFFF")
-                )
-            if hasattr(self, 'translated_label') and self.translated_label:
-                self.translated_label.configure(
-                    bg=self.background_color,
-                    fg=self.theme_colors.get("floating_translated_fg", "#FFFFFF")
-                )
+                self.artist_label.configure(bg=self.background_color, fg=self.colors["artist_fg"])
+            # Lines other than the one playing now are dimmed
+            current = len(self.rows) // 2
+            for i, (main, second) in enumerate(self.rows):
+                alpha = 1.0 if i == current else 0.45
+                main.configure(bg=self.background_color, fg=self._adjust_color_alpha(self.colors["original_fg"], alpha))
+                second.configure(bg=self.background_color, fg=self._adjust_color_alpha(self.colors["translated_fg"], alpha))
             if hasattr(self, 'close_button') and self.close_button:
                 self.close_button.configure(
-                    bg=self.theme_colors.get("floating_close_bg", self.background_color),
-                    fg=self.theme_colors.get("floating_close_fg", "#B3B3B3"),
-                    activebackground=self.theme_colors.get("floating_close_bg", "#282828"),
-                    activeforeground=self.theme_colors.get("floating_close_fg", "#FFFFFF")
+                    bg=self.colors["close_bg"],
+                    fg=self.colors["close_fg"],
+                    activebackground=self.colors["close_bg"],
+                    activeforeground=self.colors["close_fg"]
                 )
             # Update playback control buttons
-            button_bg = self.theme_colors.get("floating_button_bg", self.theme_colors.get("floating_bg", "#181818"))
-            button_fg = self.theme_colors.get("floating_button_fg", self.theme_colors.get("floating_original_fg", "#FFFFFF"))
+            button_bg = self.colors["button_bg"]
+            button_fg = self.colors["button_fg"]
             # Use same background for active state to remove green flash
             button_active_bg = button_bg
 
-            if hasattr(self, 'seek_back_button') and self.seek_back_button:
-                self.seek_back_button.configure(
-                    bg=button_bg,
-                    fg=button_fg,
-                    activebackground=button_active_bg,
-                    activeforeground=button_fg
-                )
-            if hasattr(self, 'prev_button') and self.prev_button:
-                self.prev_button.configure(
-                    bg=button_bg,
-                    fg=button_fg,
-                    activebackground=button_active_bg,
-                    activeforeground=button_fg
-                )
-            if hasattr(self, 'play_pause_button') and self.play_pause_button:
-                self.play_pause_button.configure(
-                    bg=button_bg,
-                    fg=button_fg,
-                    activebackground=button_active_bg,
-                    activeforeground=button_fg
-                )
-            if hasattr(self, 'next_button') and self.next_button:
-                self.next_button.configure(
-                    bg=button_bg,
-                    fg=button_fg,
-                    activebackground=button_active_bg,
-                    activeforeground=button_fg
-                )
-            if hasattr(self, 'seek_forward_button') and self.seek_forward_button:
-                self.seek_forward_button.configure(
-                    bg=button_bg,
-                    fg=button_fg,
-                    activebackground=button_active_bg,
-                    activeforeground=button_fg
-                )
+            for button in (
+                getattr(self, 'seek_back_button', None),
+                getattr(self, 'prev_button', None),
+                getattr(self, 'play_pause_button', None),
+                getattr(self, 'next_button', None),
+                getattr(self, 'seek_forward_button', None),
+            ):
+                if button:
+                    button.configure(
+                        bg=button_bg,
+                        fg=button_fg,
+                        activebackground=button_active_bg,
+                        activeforeground=button_fg
+                    )
         except Exception:
             pass
+
+        # Apply the opacity; while the window is still invisible, the fade-in runs to target_alpha itself
+        try:
+            if self.window.attributes('-alpha') > 0:
+                self.window.attributes('-alpha', self.target_alpha)
+        except Exception:
+            pass
+        self._apply_lock()
 
     def play_pause(self):
         """Toggle play/pause for Spotify playback."""

@@ -1,0 +1,7 @@
+venv/
+__pycache__/
+logs/
+secrets.txt
+.cache
+.cache*
+lyrics_cache.pkl

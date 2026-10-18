@@ -34,6 +34,35 @@ DEFAULT_MODEL_PARAMS = {
 }
 
 
+# Same choices as the Android app: (code, name)
+TARGET_LANGUAGES = [
+    ("en", "English"),
+    ("zh-CN", "Chinese (Simplified)"),
+    ("zh-TW", "Chinese (Traditional)"),
+    ("ja", "Japanese"),
+    ("ko", "Korean"),
+    ("es", "Spanish"),
+    ("fr", "French"),
+    ("de", "German"),
+    ("it", "Italian"),
+    ("pt", "Portuguese"),
+    ("ru", "Russian"),
+    ("ar", "Arabic"),
+    ("hi", "Hindi"),
+    ("id", "Indonesian"),
+    ("th", "Thai"),
+    ("vi", "Vietnamese"),
+    ("tr", "Turkish"),
+    ("nl", "Dutch"),
+    ("pl", "Polish"),
+    ("uk", "Ukrainian"),
+]
+
+FLOATING_LINE_COUNTS = [1, 3, 5]
+FLOATING_STYLES = ["Dark", "Light", "Clear"]
+FLOATING_MIN_OPACITY = 0.2
+
+
 def default_translation_settings() -> Dict[str, Any]:
     return {
         "provider": "Google Translate",  # or "OpenRouter"
@@ -50,6 +79,18 @@ def default_translation_settings() -> Dict[str, Any]:
         # Floating window persisted size
         "floating_window_width": 800,
         "floating_window_height": 200,
+        # Floating window options
+        "floating_lines": 1,  # 1, 3 or 5
+        "floating_translation_only": False,
+        "floating_style": "Dark",  # one of FLOATING_STYLES
+        "floating_opacity": 0.9,  # FLOATING_MIN_OPACITY to 1; not used with the Clear style
+        # Lyrics sources: the user's order (empty for the default) and a source picked on the main window
+        "lyrics_source_order": [],
+        "pinned_lyrics_source": None,
+        # Off: songs aren't sent to OpenRouter unless refreshed; cached translations still show
+        "openrouter_auto_translate": True,
+        # Base codes ("ja", "zh") of languages OpenRouter doesn't auto-translate
+        "openrouter_skip_languages": [],
         # Theme colors (Spotify-inspired defaults)
         # Global & Text
         "accent_primary": "#1DB954",
@@ -125,8 +166,8 @@ def read_translation_settings() -> Dict[str, Any]:
 
 def save_translation_settings(values: Dict[str, Any]) -> None:
     path = get_translation_settings_path()
-    # Merge with defaults to keep keys
-    base = default_translation_settings()
+    # Merge with the current settings, so keys the caller doesn't know about (window size, pinned source) are kept
+    base = read_translation_settings()
     base.update(values or {})
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(base, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

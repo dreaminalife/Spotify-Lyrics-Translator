@@ -1,0 +1,8 @@
+spotipy
+syrics
+requests
+deep-translator
+sv-ttk
+beautifulsoup4
+langdetect
+pywebview

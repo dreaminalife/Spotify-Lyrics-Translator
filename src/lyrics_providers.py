@@ -19,6 +19,8 @@ class BaseLyricsProvider(Protocol):
 
 
 class SyricsLyricsProvider:
+    NAME = "Spotify"
+
     def __init__(self, syrics_client):
         self._client = syrics_client
 
@@ -66,6 +68,7 @@ class SyricsLyricsProvider:
 
 
 class LRCLibLyricsProvider:
+    NAME = "LRCLib"
     BASE_URL = "https://lrclib.net/api/get"
 
     def __init__(self, user_agent: str = "Spotify-Lyrics-Translator (https://github.com/)"):
@@ -176,6 +179,7 @@ class LRCLibLyricsProvider:
 
 
 class UtaNetLyricsProvider:
+    NAME = "Uta-Net"
     SEARCH_URL = "https://www.uta-net.com/search/"
 
     def __init__(self, user_agent: str = "Mozilla/5.0 (Lyrics-Translator/0.1)"):

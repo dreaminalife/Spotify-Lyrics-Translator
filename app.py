@@ -10,7 +10,9 @@ from src.lyrics_manager import LyricsManager
 from src.floating_window import FloatingLyricsWindow
 from src.lyrics_models import TrackMetadata
 from src.lyrics_providers import SyricsLyricsProvider, LRCLibLyricsProvider, UtaNetLyricsProvider
-from src.lyrics_service import LyricsService
+from src.chinese_lyrics_providers import NetEaseLyricsProvider, QQMusicLyricsProvider, KugouLyricsProvider
+from src.lyrics_service import LyricsService, DEFAULT_ORDER, resolve_order
+from src import lyrics_language
 from src.settings_manager import read_secrets, validate_secrets
 from src.translation_clients import GoogleTranslateClient, OpenRouterClient
 from src.translation_settings import (
@@ -18,6 +20,7 @@ from src.translation_settings import (
     save_translation_settings,
     read_models_config,
     get_theme_colors,
+    TARGET_LANGUAGES,
 )
 from src.settings_window import SettingsWindow
 from src.font_manager import get_default_chinese_font
@@ -46,7 +49,6 @@ current_song_name = ""
 language = ""
 floating_window = None
 lyrics_synced = True
-last_current_line = None
 current_lyrics_source = "Unknown"
 current_translation_source = "Unknown"
 selected_font = "Microsoft YaHei UI"  # Default font (will be updated after tkinter init)
@@ -54,6 +56,9 @@ current_highlighted_item = None
 user_scroll_lock_until = 0.0
 lyrics_tree_items = []
 lyrics_timecodes = []
+# Bumped on each lyrics load; results of an older load (another song, another source picked) are dropped
+load_generation = 0
+current_translated_title = None
 
 # Playback polling cache/state
 playback_cache = {
@@ -196,12 +201,15 @@ def init_spotify_client(settings):
         # Initialize lyrics service now that spotify client exists
         global lyrics_service
         providers = [
+            NetEaseLyricsProvider(),
+            QQMusicLyricsProvider(),
+            KugouLyricsProvider(),
             SyricsLyricsProvider(spotify_client.syrics_sp),
-            LRCLibLyricsProvider("Lyrics-Translator/0.1 (https://github.com/)")
+            LRCLibLyricsProvider("Lyrics-Translator/0.1 (https://github.com/)"),
+            UtaNetLyricsProvider(),
         ]
-        # Add UtaNet provider as last fallback (search + log only for now)
-        providers.append(UtaNetLyricsProvider())
-        lyrics_service = LyricsService(providers)
+        # Tried in the order from settings (see resolve_order)
+        lyrics_service = LyricsService({p.NAME: p for p in providers})
         start_playback_polling()
     except Exception as e:
         logger.error(f"Error initializing Spotify client: {e}")
@@ -287,6 +295,7 @@ def open_settings_modal(prefill=None):
             font_name, font_size, is_bold = get_floating_font_settings()
             floating_window.update_font_settings(font_name, font_size, is_bold)
             floating_window.apply_colors()
+        update_source_picker()
         # Force refresh lyrics after auth
         global current_song_id
         current_song_id = None
@@ -310,48 +319,13 @@ def ensure_settings_and_init():
         return
     init_spotify_client(settings)
 
-# Helper function to merge translated lyrics into current_lyrics
-def merge_translations_into_current(translated_lyrics):
-    """Merge translated lyrics into current_lyrics in place.
 
-    Args:
-        translated_lyrics: List of translated lyric dictionaries (or dict with 'lyrics' key for cache format)
-
-    Returns:
-        int: Number of lines updated
-    """
-    global current_lyrics
-
-    # Handle new cache format: dict with 'lyrics' key
-    if isinstance(translated_lyrics, dict) and 'lyrics' in translated_lyrics:
-        translated_lyrics = translated_lyrics['lyrics']
-
-    # Create lookup dict for current_lyrics by (startTimeMs, words) for efficient merging
-    current_lookup = {(lyric['startTimeMs'], lyric['words']): lyric for lyric in current_lyrics}
-
-    updated_count = 0
-    for translated in translated_lyrics:
-        key = (translated['startTimeMs'], translated['words'])
-        if key in current_lookup:
-            current_lookup[key]['translated'] = translated['translated']
-            updated_count += 1
-        else:
-            # Try with type conversion for startTimeMs (string vs int)
-            alt_key = None
-            if isinstance(translated['startTimeMs'], str):
-                try:
-                    alt_key = (int(translated['startTimeMs']), translated['words'])
-                except ValueError:
-                    pass
-            elif isinstance(translated['startTimeMs'], int):
-                alt_key = (str(translated['startTimeMs']), translated['words'])
-
-            if alt_key and alt_key in current_lookup:
-                current_lookup[alt_key]['translated'] = translated['translated']
-                updated_count += 1
-
-    logger.debug(f"merge_translations_into_current: Merged {updated_count} translated lines into current_lyrics")
-    return updated_count
+def track_key(item):
+    """Identifies a track in the cache: its Spotify ID, or for local files, which have none, its artists, title and length."""
+    if item.get('id'):
+        return item['id']
+    artists = ", ".join(a.get('name') or '' for a in (item.get('artists') or []))
+    return f"local:{artists}|{item.get('name') or ''}|{int(item.get('duration_ms') or 0) // 1000}".lower()
 
 # Function to get the current song and playback position
 def get_current_playback_position():
@@ -380,7 +354,7 @@ def get_current_playback_position():
 
 # Function to update the Treeview and the current time label
 def update_display():
-    global current_song_id, floating_window, lyrics_synced, last_current_line
+    global current_song_id, floating_window, lyrics_synced
     global current_highlighted_item, user_scroll_lock_until
     current_song, current_position = get_current_playback_position()
 
@@ -388,11 +362,9 @@ def update_display():
     is_playing = current_song.get('is_playing', False) if current_song else False
 
     if current_song:
-        song_id = current_song['item']['id']
+        song_id = track_key(current_song['item'])
         if song_id != current_song_id:
             current_song_id = song_id
-            global last_current_line
-            last_current_line = None  # Clear last current line when switching songs
             update_lyrics()
             current_highlighted_item = None
 
@@ -403,10 +375,9 @@ def update_display():
         song_name = current_song['item']['name']
         artist_name = current_song['item']['artists'][0]['name'] if current_song['item']['artists'] else "Unknown Artist"
         
-        # Check if we have a cached translation for this song title
-        original_title, translated_title = lyrics_manager.get_cached_title(song_id)
-        if original_title and translated_title and original_title != translated_title:
-            display_title = f"{original_title} ({translated_title})"
+        # Show the translated title once the song is translated
+        if current_translated_title and current_translated_title != song_name:
+            display_title = f"{song_name} ({current_translated_title})"
             current_song_var.set(f"{display_title} • {artist_name}")
         else:
             current_song_var.set(f"{song_name} • {artist_name}")
@@ -504,39 +475,17 @@ def update_display():
 
         # Update floating window if it exists
         if floating_window and floating_window.is_open():
-            if lyrics_synced and is_playing:
-                # Use the same source as the main window (Treeview) for current line
-                if last_index:
-                    item_values = tree.item(last_index)['values']
-                    current_line = {
-                        'words': item_values[1],
-                        'translated': item_values[2]
-                    }
-                    last_current_line = current_line  # Update last current line
-                else:
-                    current_line = None
-                    last_current_line = None
-                song_duration = current_song['item']['duration_ms'] if current_song and 'item' in current_song else 0
-                
-                # Get translated title for floating window
-                original_title, translated_title = lyrics_manager.get_cached_title(song_id)
-                floating_window.update_lyrics(current_song_name, artist_name, current_line, current_position, song_duration, translated_title)
-                # Update play/pause button state without extra Spotify calls
-                floating_window.update_play_pause_button(is_playing)
-            elif not is_playing and lyrics_synced:
-                # When paused, keep displaying the last current line
-                song_duration = current_song['item']['duration_ms'] if current_song and 'item' in current_song else 0
-                
-                # Get translated title for floating window
-                original_title, translated_title = lyrics_manager.get_cached_title(song_id)
-                floating_window.update_lyrics(current_song_name, artist_name, last_current_line, current_position, song_duration, translated_title)
-                floating_window.update_play_pause_button(is_playing)
+            song_duration = current_song['item']['duration_ms'] if current_song and 'item' in current_song else 0
+            if lyrics_synced and current_lyrics:
+                # The line playing now, and its neighbours when the floating window shows several
+                idx = bisect.bisect_right(lyrics_timecodes, int(current_position)) - 1
+                floating_window.update_lyrics(current_song_name, artist_name, current_lyrics, idx, current_position, song_duration, current_translated_title)
             else:
-                # Unsynced or no song: clear text and avoid progression
-                last_current_line = None
-                floating_window.update_lyrics(current_song_name, artist_name, None, 0, 0)
-                floating_window.update_play_pause_button(is_playing)
-        
+                # Unsynced or no lyrics: clear text and avoid progression
+                floating_window.update_lyrics(current_song_name, artist_name, None, -1, 0, 0, current_translated_title)
+            # Update play/pause button state without extra Spotify calls
+            floating_window.update_play_pause_button(is_playing)
+
     else:
         # No song playing or not authenticated yet
         if current_highlighted_item:
@@ -599,10 +548,14 @@ def update_column_headers():
     except Exception:
         pass
 
-def update_lyrics():
-    global current_song_id, current_lyrics, current_song_name, language, lyrics_synced
-    global current_lyrics_source, current_translation_source, current_highlighted_item
-    global lyrics_tree_items, lyrics_timecodes
+def update_lyrics(force_translate=False):
+    """Load the playing song's lyrics on a worker thread; _show_lyrics displays them.
+
+    Args:
+        force_translate: Translate even when OpenRouter auto-translate is off for this song (Refresh Lyrics)
+    """
+    global current_lyrics, current_song_name, current_lyrics_source, current_translation_source
+    global current_highlighted_item, lyrics_tree_items, lyrics_timecodes, load_generation, current_translated_title
 
     try:
         # Get current playback
@@ -627,264 +580,272 @@ def update_lyrics():
                 status_label.config(text="No song playing")
             return
 
-        song_id = current_playback['item']['id']
-        song_name = current_playback['item']['name']
-        artist_name = current_playback['item']['artists'][0]['name'] if current_playback['item']['artists'] else "Unknown Artist"
+        item = current_playback['item']
+        song_id = track_key(item)
+        song_name = item['name']
+        artist_names = [a.get('name', '') for a in (item.get('artists') or []) if a.get('name')]
+        artist_name = artist_names[0] if artist_names else "Unknown Artist"
         current_song_name = song_name
         logger.debug(f"update_lyrics: Processing song '{song_name}' with ID {song_id}")
-        
+
         # Update window title with song info
         root.title(f"{song_name} • {artist_name} - Spotify Lyrics Translator")
-        
-        # Check cache first - avoid expensive API calls if we already have lyrics
-        cached = lyrics_manager.get_cached_lyrics(song_id)
-        if cached:
-            logger.debug(f"update_lyrics: Using cached lyrics for song {song_id}, length={len(cached.get('lyrics', []))}")
-            # Update status
-            status_label.config(text="Loading cached lyrics...")
 
-            # Extract cached data
-            lyrics_data = cached.get('lyrics', [])
-            lyrics_synced = cached.get('synced', True)  # Get actual synced status from cache
-            current_lyrics_source = cached.get('lyrics_source', 'Unknown')
-            current_translation_source = cached.get('translation_source', 'Unknown')
+        load_generation += 1
+        generation = load_generation
 
-            # Clear existing treeview items
-            tree.delete(*tree.get_children())
-            lyrics_tree_items = []
-            lyrics_timecodes = []
-            current_highlighted_item = None
+        # Clear what the previous load showed
+        tree.delete(*tree.get_children())
+        current_lyrics = []
+        lyrics_tree_items = []
+        lyrics_timecodes = []
+        current_highlighted_item = None
+        current_lyrics_source = "Unknown"
+        current_translation_source = "Unknown"
+        current_translated_title = None
+        set_banner_notes([])
+        update_column_headers()
+        update_source_picker()
 
-            if lyrics_data:
-                # Initialize current_lyrics from cached data (already includes translations)
-                current_lyrics = [
-                    {'startTimeMs': lyric['startTimeMs'], 'words': lyric['words'], 'translated': lyric.get('translated', '')}
-                    for lyric in lyrics_data
-                ]
-                logger.debug(f"update_lyrics: Loaded {len(current_lyrics)} cached lines")
+        if not lyrics_service:
+            status_label.config(text="No lyrics found")
+            return
+        status_label.config(text="Loading lyrics...")
 
-                # Update column headers with source info
-                update_column_headers()
+        track_meta = TrackMetadata(
+            track_name=song_name,
+            artist_name=artist_names[0] if artist_names else '',
+            album_name=(item.get('album') or {}).get('name') or '',
+            duration_ms=int(item.get('duration_ms') or 0),
+            artist_names=artist_names,
+        )
+        settings = read_translation_settings()
+        pinned = settings.get("pinned_lyrics_source")
+        order = resolve_order(settings.get("lyrics_source_order"), pinned)
 
-                # Populate Treeview with cached lyrics (including translations)
-                for i, lyric in enumerate(current_lyrics):
-                    tag = 'evenrow' if i % 2 == 0 else 'oddrow'
-                    time_text = lyrics_manager.ms_to_min_sec(lyric['startTimeMs']) if lyrics_synced else ""
-                    item_id = tree.insert("", "end", values=(time_text, lyric['words'], lyric['translated']), tags=(tag,))
-                    lyrics_tree_items.append(item_id)
-                    try:
-                        lyrics_timecodes.append(int(lyric['startTimeMs']))
-                    except Exception:
-                        lyrics_timecodes.append(0)
+        def load():
+            try:
+                result = lyrics_service.get_lyrics(
+                    track_meta,
+                    item.get('id'),
+                    order,
+                    cache_lookup=lambda name: lyrics_manager.get_cached(song_id, name),
+                    is_stale=lambda: generation != load_generation,
+                )
+                if result and not result.get('cached'):
+                    lyrics_manager.put_lyrics(song_id, result)
+            except Exception as e:
+                logger.error(f"Error loading lyrics: {e}")
+                result = None
+            root.after(0, lambda: _show_lyrics(generation, song_id, song_name, pinned, result, force_translate))
 
-                # Toggle synced banner and Time heading/column
-                try:
-                    if lyrics_synced:
-                        if getattr(unsynced_banner_label, '_packed', False):
-                            unsynced_banner_label.pack_forget()
-                            unsynced_banner_label._packed = False
-                        tree.heading("Time", text="  Time")
-                    else:
-                        unsynced_banner_label.config(text="Lyrics are not time-synced.")
-                        if not getattr(unsynced_banner_label, '_packed', False):
-                            # Place banner to the right of refresh button
-                            unsynced_banner_label.pack(side=tk.LEFT, padx=(20, 0))
-                            unsynced_banner_label._packed = True
-                        tree.heading("Time", text="")
-                except Exception:
-                    pass
-
-                # Update song title with cached translation if available
-                original_title, translated_title = lyrics_manager.get_cached_title(song_id)
-                if original_title and translated_title and original_title != translated_title:
-                    display_title = f"{original_title} ({translated_title})"
-                    current_song_var.set(f"{display_title} • {artist_name}")
-                    root.title(f"{display_title} • {artist_name} - Spotify Lyrics Translator")
-
-                status_label.config(text="Ready")
-                adjust_column_widths()
-            else:
-                logger.debug("update_lyrics: Cached lyrics data is empty")
-                status_label.config(text="Cached lyrics data corrupted")
-        else:
-            # No cached lyrics - fetch fresh lyrics
-            logger.debug(f"update_lyrics: No cached lyrics, fetching fresh lyrics for song {song_id}")
-
-            # Update status
-            status_label.config(text="Loading lyrics...")
-
-            # Get lyrics via service with fast retries and fallback
-            lyrics = None
-            if spotify_client and lyrics_service:
-                meta_dict, _ = spotify_client.get_current_track_metadata()
-                if meta_dict:
-                    track_meta = TrackMetadata(
-                        track_name=meta_dict['track_name'],
-                        artist_name=meta_dict['artist_name'],
-                        album_name=meta_dict['album_name'],
-                        duration_ms=meta_dict['duration_ms'],
-                    )
-                    lyrics = lyrics_service.get_lyrics(track_meta, song_id)
-            lyrics_data = lyrics['lyrics']['lines'] if lyrics and 'lyrics' in lyrics and 'lines' in lyrics['lyrics'] else None
-            lyrics_synced = (lyrics and lyrics.get('lyrics', {}).get('synced', True))
-            # Extract lyrics source from response
-            current_lyrics_source = lyrics.get('source', 'Unknown') if lyrics else 'Unknown'
-            logger.debug(f"update_lyrics: Retrieved lyrics data, has_lyrics={lyrics_data is not None}, lyrics_count={len(lyrics_data) if lyrics_data else 0}, source={current_lyrics_source}")
-
-            # Clear existing treeview items
-            tree.delete(*tree.get_children())
-            lyrics_tree_items = []
-            lyrics_timecodes = []
-            current_highlighted_item = None
-
-            if lyrics_data:
-                # Detect the language of the first line of lyrics
-                detected_lang = lyrics['lyrics']['language']
-                language = detected_lang
-                # Update column headers with source info
-                update_column_headers()
-
-                # Initialize current_lyrics as single source of truth with original lyrics
-                current_lyrics = [
-                    {'startTimeMs': lyric['startTimeMs'], 'words': lyric['words'], 'translated': ''}
-                    for lyric in lyrics_data
-                ]
-                logger.debug(f"update_lyrics: Initialized current_lyrics with {len(current_lyrics)} lines")
-
-                # Populate Treeview from current_lyrics with alternating row colors
-                for i, lyric in enumerate(current_lyrics):
-                    tag = 'evenrow' if i % 2 == 0 else 'oddrow'
-                    time_text = lyrics_manager.ms_to_min_sec(lyric['startTimeMs']) if lyrics_synced else ""
-                    item_id = tree.insert("", "end", values=(time_text, lyric['words'], lyric['translated']), tags=(tag,))
-                    lyrics_tree_items.append(item_id)
-                    try:
-                        lyrics_timecodes.append(int(lyric['startTimeMs']))
-                    except Exception:
-                        lyrics_timecodes.append(0)
-
-                # Ensure the UI renders original lyrics immediately before translation starts
-                try:
-                    root.update_idletasks()
-                except Exception:
-                    pass
-
-                # Toggle unsynced banner and Time heading/column
-                try:
-                    if lyrics_synced:
-                        if getattr(unsynced_banner_label, '_packed', False):
-                            unsynced_banner_label.pack_forget()
-                            unsynced_banner_label._packed = False
-                        tree.heading("Time", text="  Time")
-                    else:
-                        unsynced_banner_label.config(text="Lyrics are not time-synced.")
-                        if not getattr(unsynced_banner_label, '_packed', False):
-                            # Place banner to the right of refresh button
-                            unsynced_banner_label.pack(side=tk.LEFT, padx=(20, 0))
-                            unsynced_banner_label._packed = True
-                        tree.heading("Time", text="")
-                except Exception:
-                    pass
-
-                logger.debug(f"update_lyrics: Starting translation for song {song_id}")
-
-                # Check if user selected OpenRouter but API key is missing
-                settings = read_translation_settings()
-                if settings.get("provider") == "OpenRouter":
-                    secrets = read_secrets()
-                    api_key = secrets.get("openrouter_api_key", "")
-                    if not api_key.strip():
-                        status_label.config(text="OpenRouter selected but API key missing. Please add it in Settings.")
-                        return  # Don't start translation
-
-                status_label.config(text="Translating lyrics...")
-                # Translate in background thread
-                def translate_callback(translated):
-                    logger.debug(f"translate_callback: Translation completed for song {song_id}, received {len(translated)} lines")
-                    # Update translation source from current client
-                    global current_translation_source
-                    try:
-                        current_translation_source = lyrics_manager.translation_client.get_source_name()
-                    except Exception:
-                        current_translation_source = "Unknown"
-                    update_column_headers()
-                    status_label.config(text="Translation complete")
-                    merge_translations_into_current(translated)
-
-                    # Update song title with translation if available
-                    original_title, translated_title = lyrics_manager.get_cached_title(song_id)
-                    if original_title and translated_title and original_title != translated_title:
-                        display_title = f"{original_title} ({translated_title})"
-                        current_song_var.set(f"{display_title} • {artist_name}")
-                        root.title(f"{display_title} • {artist_name} - Spotify Lyrics Translator")
-
-                    # Schedule UI update on main thread
-                    root.after(0, update_translations)
-                    # Reset status after a delay
-                    root.after(3000, lambda: status_label.config(text="Ready"))
-
-                threading.Thread(
-                    target=lyrics_manager.translate_lyrics,
-                    args=(lyrics_data, song_id, current_lyrics_source, translate_callback, song_name, lyrics_synced)
-                ).start()
-            elif lyrics is None:
-                # Could be an auth error or API error; handled elsewhere
-                current_lyrics_source = "unknown"
-                current_translation_source = "unknown"
-                status_label.config(text="No lyrics found")
-                update_column_headers()
-            else:
-                logger.debug("update_lyrics: No lyrics data available for this song")
-                status_label.config(text="No lyrics available")
-                tree.insert("", "end", values=("0:00", "(No lyrics found)", ""), tags=('evenrow',))
-                current_lyrics = []
-        
-        adjust_column_widths()
+        threading.Thread(target=load, name="LyricsLoader", daemon=True).start()
     except Exception as e:
         logger.error(f"Error updating lyrics: {e}")
         status_label.config(text="Error loading lyrics")
 
-# Function to update the Treeview with translated lyrics from current_lyrics
-def update_translations():
-    global current_lyrics, lyrics_synced, lyrics_tree_items
 
-    # Rebuild the translated lyrics column from current_lyrics
+def _show_lyrics(generation, song_id, song_name, pinned, result, force_translate):
+    """Display lyrics loaded by update_lyrics, then start translating them. Runs on the UI thread."""
+    global current_lyrics, language, lyrics_synced, current_lyrics_source, current_translation_source
+    global lyrics_tree_items, lyrics_timecodes
+
+    if generation != load_generation:
+        return
+    try:
+        lyrics = (result or {}).get('lyrics') or {}
+        lines = lyrics.get('lines') or []
+        current_lyrics_source = result.get('source', 'Unknown') if lines else "Unknown"
+        update_source_picker()
+        notes = []
+        if pinned and pinned != current_lyrics_source:
+            notes.append(f"Couldn't get lyrics from {pinned}")
+
+        if not lines:
+            set_banner_notes(notes)
+            status_label.config(text="No lyrics found")
+            update_column_headers()
+            return
+
+        lyrics_synced = lyrics.get('synced', True)
+        language = lyrics.get('language', '')
+        if not lyrics_synced:
+            notes.append("Lyrics are not time-synced.")
+        set_banner_notes(notes)
+
+        # current_lyrics is the single source of truth, one entry per tree row
+        current_lyrics = [
+            {'startTimeMs': line['startTimeMs'], 'words': line['words'], 'provided': line.get('provided', ''), 'translated': ''}
+            for line in lines
+        ]
+        # A translation shipped with the lyrics shows at once
+        provided = lyrics_manager.provided_translation(current_lyrics)
+        if provided:
+            for lyric, text in zip(current_lyrics, provided):
+                lyric['translated'] = text
+            current_translation_source = current_lyrics_source
+        logger.debug(f"_show_lyrics: {len(current_lyrics)} lines from {current_lyrics_source}")
+
+        # Populate Treeview from current_lyrics with alternating row colors
+        lyrics_tree_items = []
+        lyrics_timecodes = []
+        for i, lyric in enumerate(current_lyrics):
+            tag = 'evenrow' if i % 2 == 0 else 'oddrow'
+            time_text = lyrics_manager.ms_to_min_sec(lyric['startTimeMs']) if lyrics_synced else ""
+            item_id = tree.insert("", "end", values=(time_text, lyric['words'], lyric['translated']), tags=(tag,))
+            lyrics_tree_items.append(item_id)
+            try:
+                lyrics_timecodes.append(int(lyric['startTimeMs']))
+            except Exception:
+                lyrics_timecodes.append(0)
+
+        # Hide the Time heading for unsynced lyrics
+        tree.heading("Time", text="  Time" if lyrics_synced else "")
+        update_column_headers()
+        adjust_column_widths()
+
+        status_label.config(text="Ready")
+        lyrics_data = [dict(lyric) for lyric in current_lyrics]
+        threading.Thread(
+            target=_translate_lyrics,
+            args=(generation, song_id, song_name, current_lyrics_source, lyrics_data, language, force_translate),
+            name="Translator",
+            daemon=True,
+        ).start()
+    except Exception as e:
+        logger.error(f"Error showing lyrics: {e}")
+        status_label.config(text="Error loading lyrics")
+
+
+def _translate_lyrics(generation, song_id, song_name, source, lyrics_data, language_tag, force):
+    """Decide whether to translate, then translate. Runs on a worker thread; _on_translation shows the outcome.
+
+    Already in the target language: not translated. OpenRouter without a key: not translated. A cached translation
+    always shows. OpenRouter with auto-translate off, or for a skipped language: only when forced (Refresh Lyrics).
+    """
+    def post(state, data=None):
+        root.after(0, lambda: _on_translation(generation, state, data))
+
+    try:
+        target = lyrics_manager.target_language
+        detected = lyrics_language.detect_language([line['words'] for line in lyrics_data], language_tag)
+        if detected == lyrics_language.base(target):
+            logger.info(f"Translation skipped: '{song_name}' is already in {target}")
+            post('same', target)
+            return
+        client = lyrics_manager.translation_client
+        is_openrouter = lyrics_manager.translator_id().startswith("openrouter:")
+        if is_openrouter and not getattr(client, 'api_key', ''):
+            post('missing_key')
+            return
+        cached = lyrics_manager.get_translation(song_id, source, len(lyrics_data))
+        if cached:
+            post('done', (cached, True))
+            return
+        if is_openrouter and not force:
+            settings = read_translation_settings()
+            if not settings.get("openrouter_auto_translate", True):
+                logger.info(f"Translation not requested: OpenRouter auto-translate is off for '{song_name}'")
+                post('not_requested')
+                return
+            if detected and detected in (settings.get("openrouter_skip_languages") or []):
+                logger.info(f"Translation not requested: OpenRouter auto-translate is off for {detected} ('{song_name}')")
+                post('not_requested')
+                return
+        post('translating')
+        post('done', (lyrics_manager.translate_lyrics(lyrics_data, song_id, source, song_name), False))
+    except Exception as e:
+        logger.error(f"Translation failed for '{song_name}': {e}")
+        post('failed', str(e))
+
+
+def _on_translation(generation, state, data=None):
+    """Show a translation outcome from _translate_lyrics. Runs on the UI thread."""
+    global current_translation_source, current_translated_title
+
+    if generation != load_generation:
+        return
+    if state == 'translating':
+        status_label.config(text="Translating lyrics...")
+        return
+    if state == 'done':
+        translation, cached = data
+        for lyric, text in zip(current_lyrics, translation['lines']):
+            lyric['translated'] = text
+        current_translation_source = translation.get('label', 'Unknown')
+        current_translated_title = translation.get('title')
+        update_column_headers()
+        update_translations(highlight=not cached)
+        status_label.config(text="Ready" if cached else "Translation complete")
+        if not cached:
+            # Reset status after a delay
+            root.after(3000, lambda: generation == load_generation and status_label.config(text="Ready"))
+        return
+    if state == 'same':
+        name = next((n for code, n in TARGET_LANGUAGES if code == data), data)
+        if name.startswith("Chinese"):
+            name = "Chinese"
+        current_translation_source = f"Already in {name}"
+        status_label.config(text=f"Already in {name}")
+    elif state == 'missing_key':
+        status_label.config(text="OpenRouter selected but API key missing. Please add it in Settings.")
+    elif state == 'not_requested':
+        status_label.config(text="Not translated. Press Refresh Lyrics to translate")
+    elif state == 'failed':
+        status_label.config(text=f"Translation failed: {data}. Press Refresh Lyrics to retry")
+    update_column_headers()
+
+
+def set_banner_notes(notes):
+    """Show notes such as "Lyrics are not time-synced." next to the buttons; none hides the banner."""
+    try:
+        if notes:
+            unsynced_banner_label.config(text="  ·  ".join(notes))
+            if not getattr(unsynced_banner_label, '_packed', False):
+                # Place banner to the right of the buttons
+                unsynced_banner_label.pack(side=tk.LEFT, padx=(20, 0))
+                unsynced_banner_label._packed = True
+        elif getattr(unsynced_banner_label, '_packed', False):
+            unsynced_banner_label.pack_forget()
+            unsynced_banner_label._packed = False
+    except Exception:
+        pass
+
+
+def update_source_picker():
+    """Label the source picker with the shown source, and check the source tried first."""
+    settings = read_translation_settings()
+    pinned = settings.get("pinned_lyrics_source")
+    first = resolve_order(settings.get("lyrics_source_order"), pinned)[0]
+    source_choice_var.set(first)
+    shown = current_lyrics_source if current_lyrics_source not in ("Unknown", "unknown") else "Lyrics source"
+    source_button.config(text=f"{shown} ▾")
+
+
+def pick_lyrics_source(name):
+    """Try this source first, for this and later songs; picking the first source of the Settings order unpins."""
+    settings = read_translation_settings()
+    first = resolve_order(settings.get("lyrics_source_order"), None)[0]
+    save_translation_settings({"pinned_lyrics_source": None if name == first else name})
+    update_lyrics()
+
+
+# Function to update the Treeview with translated lyrics from current_lyrics
+def update_translations(highlight=True):
+    # Rows and current_lyrics are 1:1
     updated_count = 0
-    for i, item in enumerate(lyrics_tree_items):
+    for item, lyric in zip(lyrics_tree_items, current_lyrics):
         if not tree.exists(item):
             continue
-        item_data = tree.item(item)
-        if lyrics_synced:
-            start_time = item_data['values'][0]
-            original_lyrics = item_data['values'][1]
-            # Find matching lyric in current_lyrics
-            for lyric in current_lyrics:
-                if lyrics_manager.ms_to_min_sec(lyric['startTimeMs']) == start_time and lyric['words'] == original_lyrics:
-                    current_values = list(tree.item(item)['values'])
-                    current_values[2] = lyric['translated']
-                    tree.item(item, values=current_values)
-                    updated_count += 1
-                    if lyric['translated']:
-                        _highlight_translation(item)
-                    break
-        else:
-            # Unsynced: update by row index
-            if i < len(current_lyrics):
-                lyric = current_lyrics[i]
-                current_values = list(tree.item(item)['values'])
-                current_values[2] = lyric.get('translated', '')
-                tree.item(item, values=current_values)
-                if lyric.get('translated'):
-                    updated_count += 1
-                    _highlight_translation(item)
+        current_values = list(tree.item(item)['values'])
+        current_values[2] = lyric.get('translated', '')
+        tree.item(item, values=current_values)
+        if lyric.get('translated'):
+            updated_count += 1
+            if highlight:
+                _highlight_translation(item)
 
     logger.debug(f"update_translations: Updated {updated_count} translated lyrics in Treeview")
-
-    # Log first few updated lines for verification
-    if current_lyrics and len(current_lyrics) > 0:
-        first_few = current_lyrics[:3]
-        for i, lyric in enumerate(first_few):
-            translated = (lyric.get('translated') or '')[:50]
-
     adjust_column_widths()
 
 def _highlight_translation(item, step=0):
@@ -1027,7 +988,14 @@ def toggle_floating_window():
         # Get floating window font settings
         font_name, font_size, is_bold = get_floating_font_settings()
         floating_window = FloatingLyricsWindow(root, spotify_client, font_name, font_size, is_bold)
+        floating_window.set_locked(floating_locked_var.get())
         toggle_button.config(text="Hide Floating Lyrics")
+
+
+def toggle_floating_lock():
+    """Lock: clicks pass through the floating window. Unlocked from here, as a locked window takes no clicks."""
+    if floating_window and floating_window.is_open():
+        floating_window.set_locked(floating_locked_var.get())
 
 def update_song_title_wraplength():
     """Update the wraplength of the song title label based on window width."""
@@ -1068,6 +1036,7 @@ def refresh_ui_font():
     current_time_label.config(font=(font_name, 12, font_style))
     toggle_button.config(font=(font_name, 12, font_style))
     refresh_button.config(font=(font_name, 12, font_style))
+    source_button.config(font=(font_name, 12, font_style))
     status_label.config(font=(font_name, 11, font_style))
     
     # Update wraplength after font refresh
@@ -1226,6 +1195,13 @@ def refresh_theme_colors():
         # Update hover handlers
         refresh_button.bind("<Enter>", lambda e: refresh_button.config(bg=button_secondary_hover))
         refresh_button.bind("<Leave>", lambda e: refresh_button.config(bg=button_secondary_bg))
+
+        # Lyrics source picker
+        source_button.configure(
+            bg=button_secondary_bg,
+            fg=button_secondary_fg,
+            activebackground=theme_colors.get("button_secondary_active", SPOTIFY_LIGHT_GRAY)
+        )
     except Exception:
         pass
 
@@ -1243,6 +1219,11 @@ file_menu.add_command(label="Settings...", command=lambda: open_settings_modal()
 file_menu.add_separator()
 file_menu.add_command(label="Exit", command=root.quit)
 menubar.add_cascade(label="File", menu=file_menu)
+view_menu = tk.Menu(menubar, tearoff=0)
+# Not saved, like on Android: the floating window opens unlocked after a restart
+floating_locked_var = tk.BooleanVar(value=False)
+view_menu.add_checkbutton(label="Lock Floating Lyrics", variable=floating_locked_var, command=lambda: toggle_floating_lock())
+menubar.add_cascade(label="View", menu=view_menu)
 root.config(menu=menubar)
 
 # Set window icon and initial size
@@ -1362,23 +1343,18 @@ toggle_button.pack(side=tk.LEFT, padx=(0, 10))
 
 # Add a refresh button to manually refresh lyrics
 def refresh_lyrics():
-    """Manually refresh the current song's lyrics."""
-    global current_song_id
-    # Clear cache for the currently playing song (if any)
+    """Manually refresh the current song's lyrics, and translate them even if auto-translate is off."""
+    # Clear the cache of the shown source for the currently playing song (if any); other sources' stay
     current_playback, _ = get_current_playback_position()
     song_id = None
     try:
         if current_playback and current_playback.get('item'):
-            song_id = current_playback['item']['id']
+            song_id = track_key(current_playback['item'])
     except Exception:
         song_id = None
-    if song_id:
-        lyrics_manager.clear_cache(song_id)
-        try:
-            status_label.config(text="Cache cleared. Refreshing lyrics...")
-        except Exception:
-            pass
-    update_lyrics()
+    if song_id and song_id == current_song_id and current_lyrics_source not in ("Unknown", "unknown"):
+        lyrics_manager.clear_cache(song_id, current_lyrics_source)
+    update_lyrics(force_translate=True)
 
 refresh_button = tk.Button(
     control_frame,
@@ -1396,6 +1372,34 @@ refresh_button = tk.Button(
     command=refresh_lyrics
 )
 refresh_button.pack(side=tk.LEFT, padx=(0, 10))
+
+# Lyrics source picker: shows the source of the lyrics shown; picking one tries it first from now on
+source_choice_var = tk.StringVar()
+source_button = tk.Menubutton(
+    control_frame,
+    text="Lyrics source ▾",
+    font=(get_selected_font(), 12, 'bold'),
+    fg=theme_colors.get("button_secondary_fg", SPOTIFY_WHITE),
+    bg=theme_colors.get("button_secondary_bg", SPOTIFY_GRAY),
+    activebackground=theme_colors.get("button_secondary_active", SPOTIFY_LIGHT_GRAY),
+    activeforeground=theme_colors.get("button_secondary_fg", SPOTIFY_WHITE),
+    bd=0,
+    padx=16,
+    pady=8,
+    relief=tk.FLAT,
+    cursor="hand2",
+)
+source_menu = tk.Menu(source_button, tearoff=0)
+for _source_name in DEFAULT_ORDER:
+    source_menu.add_radiobutton(
+        label=_source_name,
+        variable=source_choice_var,
+        value=_source_name,
+        command=lambda name=_source_name: pick_lyrics_source(name),
+    )
+source_button.config(menu=source_menu)
+# fill=Y: a Menubutton is drawn shorter than a Button with the same padding
+source_button.pack(side=tk.LEFT, padx=(0, 10), fill=tk.Y)
 
 # Hover effects will be set by refresh_theme_colors()
 
@@ -1521,6 +1525,7 @@ tree.bind("<KeyPress-Up>", _record_user_tree_interaction, add="+")
 tree.bind("<KeyPress-Down>", _record_user_tree_interaction, add="+")
 
 # Initialize settings and client
+update_source_picker()
 ensure_settings_and_init()
 init_translation_client()
 
