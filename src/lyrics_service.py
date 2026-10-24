@@ -7,15 +7,16 @@ import logging
 
 from .lyrics_models import TrackMetadata, LyricsPayload
 from .lyrics_providers import BaseLyricsProvider
+from .native_names import NativeNameLookup
 
 # The order sources are tried in unless the user changes it (same as the Android app)
 DEFAULT_ORDER = ["NetEase", "QQ Music", "Kugou", "Spotify", "LRCLib", "Uta-Net"]
 
 # Source name -> (attempts, timeout per attempt in seconds). Sources not listed get one attempt of
-# CHINESE_SOURCE_TIMEOUT: NetEase, QQ Music and Kugou make up to 4 requests, each with its own HTTP timeout.
+# CHINESE_SOURCE_TIMEOUT: NetEase, QQ Music and Kugou make up to 4 requests, each with its own HTTP timeout, and
+# LRCLib up to 4 (with and without the album, by native names and by Spotify's).
 ATTEMPT_POLICY = {
     "Spotify": (3, 0.5),
-    "LRCLib": (1, 0.9),
     # UtaNet handles its own retries internally for the search request
     "Uta-Net": (1, 18.0),
 }
@@ -34,8 +35,14 @@ def resolve_order(order: Optional[List[str]], pinned: Optional[str], default_ord
 
 
 class LyricsService:
-    def __init__(self, providers: Dict[str, BaseLyricsProvider]):
+    """When a source first misses, the track's native names are looked up with native_names. If they differ from
+    Spotify's, that source searches again with them, and every source after it searches them first, then Spotify's.
+    Found lyrics tell native_names which artists sing in Japanese.
+    """
+
+    def __init__(self, providers: Dict[str, BaseLyricsProvider], native_names: Optional[NativeNameLookup] = None):
         self._providers = providers
+        self._native_names = native_names
 
     def get_lyrics(
         self,
@@ -55,6 +62,13 @@ class LyricsService:
 
         # A fresh executor per search, so a timed-out attempt of an abandoned search can't delay this one
         executor = ThreadPoolExecutor(max_workers=3)
+        # The track under its native names (うっせぇわ for "Usseewa"), or itself if they are the same; None until known.
+        native = self._native_names.cached(track) if self._native_names else None
+
+        def native_for(name: str) -> Optional[TrackMetadata]:
+            # Spotify finds the song by its id, so other names find nothing new.
+            return native if native is not None and native != track and name != "Spotify" else None
+
         try:
             for name in order:
                 if is_stale and is_stale():
@@ -64,14 +78,25 @@ class LyricsService:
                     cached = cache_lookup(name)
                     if cached:
                         logging.info(f"Using cached lyrics from {name} for {track_info}")
+                        self._found(track, cached)
                         return {**cached, "cached": True}
                 provider = self._providers.get(name)
                 if provider is None:
                     continue
-                payload = self._try_provider(executor, name, provider, track, spotify_track_id)
-                if payload and payload.lines:
+                tracks = [t for t in (native_for(name), track) if t is not None]
+                payload = self._try_provider(executor, name, provider, tracks, spotify_track_id)
+                if not payload and native is None and self._native_names:
+                    native = self._native_names.look_up(track)
+                    if is_stale and is_stale():
+                        logging.info(f"Lyrics search for {track_info} abandoned")
+                        return None
+                    if native_for(name):
+                        payload = self._try_provider(executor, name, provider, [native_for(name)], spotify_track_id)
+                if payload:
                     logging.info(f"Successfully retrieved lyrics from {name} for {track_info} ({len(payload.lines)} lines)")
-                    return {**payload.to_api_dict(), "cached": False}
+                    result = {**payload.to_api_dict(), "cached": False}
+                    self._found(track, result)
+                    return result
                 logging.info(f"All attempts failed for provider {name}")
         finally:
             executor.shutdown(wait=False)
@@ -79,12 +104,24 @@ class LyricsService:
         logging.info(f"No lyrics found for {track_info} from any provider")
         return None
 
-    def _try_provider(self, executor, name, provider, track, spotify_track_id) -> Optional[LyricsPayload]:
+    def _found(self, track: TrackMetadata, result: dict):
+        if self._native_names:
+            self._native_names.found(track, [line.get("words") or "" for line in result["lyrics"]["lines"]])
+
+    def _try_provider(self, executor, name, provider, tracks, spotify_track_id) -> Optional[LyricsPayload]:
+        """Searches tracks (the same song under different names) in turn; an attempt's searches share its timeout."""
+        def search() -> Optional[LyricsPayload]:
+            for track in tracks:
+                payload = provider.get_lyrics(track, spotify_track_id)
+                if payload and payload.lines:
+                    return payload
+            return None
+
         attempts, timeout = ATTEMPT_POLICY.get(name, (1, CHINESE_SOURCE_TIMEOUT))
         for i in range(attempts):
             attempt_num = i + 1
             logging.debug(f"Provider {name} attempt {attempt_num}/{attempts} (timeout: {timeout}s)")
-            fut = executor.submit(provider.get_lyrics, track, spotify_track_id)
+            fut = executor.submit(search)
             try:
                 payload: Optional[LyricsPayload] = fut.result(timeout=timeout)
             except TimeoutError:

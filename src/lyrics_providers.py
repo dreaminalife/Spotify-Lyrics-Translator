@@ -81,13 +81,20 @@ class LRCLibLyricsProvider:
         params = {
             "track_name": track.track_name,
             "artist_name": track.artist_name,
-            "album_name": track.album_name,
             "duration": max(0, int(round(track.duration_ms / 1000)))
         }
+        # A sent album must equal the entry's, and uploaders file songs under all sorts of albums ("Ado Videos"), so a
+        # miss is retried without it. Without an album, title, artist and duration (±2 s) still have to match.
+        if track.album_name.strip():
+            params["album_name"] = track.album_name
         headers = {"User-Agent": self._ua}
 
         try:
             resp = requests.get(self.BASE_URL, params=params, headers=headers, timeout=0.9)
+            if resp.status_code == 404 and "album_name" in params:
+                logging.debug(f"LRCLibLyricsProvider: No match (404) with album_name='{track.album_name}'; retrying without the album")
+                del params["album_name"]
+                resp = requests.get(self.BASE_URL, params=params, headers=headers, timeout=0.9)
         except Exception as e:
             logging.debug(f"LRCLibLyricsProvider: Request failed: {e}")
             return None

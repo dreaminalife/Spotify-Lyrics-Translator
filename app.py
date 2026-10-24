@@ -12,6 +12,8 @@ from src.lyrics_models import TrackMetadata
 from src.lyrics_providers import SyricsLyricsProvider, LRCLibLyricsProvider, UtaNetLyricsProvider
 from src.chinese_lyrics_providers import NetEaseLyricsProvider, QQMusicLyricsProvider, KugouLyricsProvider
 from src.lyrics_service import LyricsService, DEFAULT_ORDER, resolve_order
+from src.native_names import NativeNameLookup
+from src import itunes_catalog
 from src import lyrics_language
 from src.settings_manager import read_secrets, validate_secrets
 from src.translation_clients import GoogleTranslateClient, OpenRouterClient
@@ -35,6 +37,8 @@ spotify_client = None
 
 # Initialize lyrics manager
 lyrics_manager = LyricsManager()
+# Japanese songs' native names, for sources that don't know Spotify's English or romanized ones
+native_names = NativeNameLookup(itunes_catalog.native_names)
 
 # Lyrics providers and service (initialized after Spotify client)
 lyrics_service = None
@@ -209,7 +213,7 @@ def init_spotify_client(settings):
             UtaNetLyricsProvider(),
         ]
         # Tried in the order from settings (see resolve_order)
-        lyrics_service = LyricsService({p.NAME: p for p in providers})
+        lyrics_service = LyricsService({p.NAME: p for p in providers}, native_names)
         start_playback_polling()
     except Exception as e:
         logger.error(f"Error initializing Spotify client: {e}")
@@ -618,6 +622,7 @@ def update_lyrics(force_translate=False):
             album_name=(item.get('album') or {}).get('name') or '',
             duration_ms=int(item.get('duration_ms') or 0),
             artist_names=artist_names,
+            key=song_id,
         )
         settings = read_translation_settings()
         pinned = settings.get("pinned_lyrics_source")

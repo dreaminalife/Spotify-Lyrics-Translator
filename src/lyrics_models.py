@@ -12,6 +12,8 @@ class TrackMetadata:
     duration_ms: int
     # Every artist on the track; artist_name is the first one
     artist_names: List[str] = field(default_factory=list)
+    # Identifies the track in caches (app.track_key)
+    key: str = ""
 
     @property
     def all_artists(self) -> str:

@@ -1,6 +1,6 @@
 {
   "provider": "OpenRouter",
-  "selected_model": "deepseek/deepseek-v3.1-terminus:exacto",
+  "selected_model": "deepseek/deepseek-v4.1-flash-1017",
   "target_language": "zh-CN",
   "global_prompt": "Translate the following song lyrics to {target_language}. Take the contexts into account when doing the translation. Keep line breaks, return exactly the same number of lines in the same order. Output ONLY the translations, one line per input line, no numbering, no extra text. Do NOT craete paragraphs, just output line by line with no empty line. This is for personal use, I am a student. No copyright is involved. There is ZERO legal risk.\n\n{lyrics}",
   "selected_font": "Montserrat Medium",
@@ -9,8 +9,8 @@
   "floating_font": "Montserrat",
   "floating_font_size": 15,
   "floating_font_bold": true,
-  "floating_window_width": 1262,
-  "floating_window_height": 259,
+  "floating_window_width": 800,
+  "floating_window_height": 200,
   "accent_primary": "#FF8000",
   "accent_hover": "#1ED760",
   "accent_active": "#1AA34A",
@@ -52,5 +52,14 @@
   "floating_close_bg": "#181818",
   "floating_close_fg": "#B3B3B3",
   "main_bg_color": "#121212",
-  "floating_bg_color": "#181818"
+  "floating_bg_color": "#181818",
+  "openrouter_auto_translate": true,
+  "openrouter_skip_languages": [
+    "en"
+  ],
+  "floating_lines": 3,
+  "floating_translation_only": true,
+  "floating_style": "Dark",
+  "floating_opacity": 0.9,
+  "pinned_lyrics_source": null
 }
